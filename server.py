@@ -432,7 +432,19 @@ async def generate_response(model_id: str) -> bool | str:
                                 )
                 if img_url:
                     img_msg = f"![Generated image]({img_url})"
-                    ctx.add_message(model_id, display_name, img_msg, images=[img_url])
+                    # Append image to the model's last text message instead of creating a separate entry
+                    appended = False
+                    for msg in reversed(ctx.history):
+                        if msg.get("role") == model_id and not msg.get("content", "").startswith("!["):
+                            msg["content"] += f"\n\n{img_msg}"
+                            if "images" not in msg:
+                                msg["images"] = []
+                            msg["images"].append(img_url)
+                            appended = True
+                            break
+                    if not appended:
+                        ctx.add_message(model_id, display_name, img_msg, images=[img_url])
+                    ctx.save_session()
                     turns_since_image = 0
                     await broadcast({
                         "type": "image_inline_ready",

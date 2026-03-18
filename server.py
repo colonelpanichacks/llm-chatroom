@@ -223,9 +223,9 @@ async def generate_response(model_id: str) -> bool | str:
                 print(f"[text-tool-extract] Extracted JSON tool call prompt from {display_name}: {extracted[:80]}")
                 tool_calls.append({"function": {"name": "generate_image", "arguments": {"prompt": extracted}}})
 
-            # Catch any "prompt": "..." pattern in JSON blocks (models invent endless formats)
+            # Catch any key containing "prompt" with a long string value (models invent endless key names)
             if not tool_calls:
-                prompt_match = re.search(r'"prompt"\s*:\s*"([^"]{10,})"', raw_response, re.IGNORECASE)
+                prompt_match = re.search(r'"[^"]*prompt[^"]*"\s*:\s*"([^"]{10,})"', raw_response, re.IGNORECASE)
                 if prompt_match:
                     extracted = prompt_match.group(1).strip()
                     print(f"[text-tool-extract] Extracted prompt from JSON in {display_name}: {extracted[:80]}")
@@ -329,10 +329,10 @@ async def generate_response(model_id: str) -> bool | str:
         clean_response = re.sub(r'\[\s*\{\s*"name"\s*:\s*"generate[_\s]?image"[\s\S]*?\}\s*\]', '', clean_response, flags=re.IGNORECASE)
         # Strip any remaining {"name": "..._image...", "arguments": {...}} blocks
         clean_response = re.sub(r'\{[^}]*"name"\s*:\s*"[^"]*image[^"]*"[^}]*"arguments"\s*:\s*\{[^}]*\}\s*\}', '', clean_response, flags=re.IGNORECASE)
-        # Nuclear: strip ANY JSON object/block that contains "prompt" key (models invent endless formats)
-        clean_response = re.sub(r'\{[^{}]*"prompt"\s*:[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', '', clean_response, flags=re.IGNORECASE | re.DOTALL)
+        # Nuclear: strip ANY JSON block containing a key with "prompt" in it (models invent image_prompt, img_prompt, etc)
+        clean_response = re.sub(r'\{[^{}]*"[^"]*prompt[^"]*"\s*:[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', '', clean_response, flags=re.IGNORECASE | re.DOTALL)
         # Strip any code-fenced block containing "prompt" (catches all variations)
-        clean_response = re.sub(r'```[^`]*"prompt"\s*:[^`]*```', '', clean_response, flags=re.IGNORECASE | re.DOTALL)
+        clean_response = re.sub(r'```[^`]*"[^"]*prompt[^"]*"\s*:[^`]*```', '', clean_response, flags=re.IGNORECASE | re.DOTALL)
         # Strip "Generate image" standalone lines
         clean_response = re.sub(r'^\s*Generate\s+image\.?\s*$', '', clean_response, flags=re.MULTILINE | re.IGNORECASE)
         clean_response = re.sub(r'^In this image,?\s+we\s+(can\s+)?see\b.*$', '', clean_response, flags=re.MULTILINE | re.IGNORECASE)
@@ -362,10 +362,11 @@ async def generate_response(model_id: str) -> bool | str:
         clean_response = re.sub(r'```python\s*\n(?:from PIL|import PIL|from diffusers|img\s*=|draw\s*=|image\s*=)[\s\S]*?```', '', clean_response, flags=re.IGNORECASE)
         # Strip [Image: description] text patterns (already extracted for tool use)
         clean_response = re.sub(r'\[Image:\s*[^\]]+\]', '', clean_response, flags=re.IGNORECASE)
-        # Strip empty or near-empty code blocks
+        # Strip empty or near-empty code blocks and orphaned language tags
         clean_response = re.sub(r'```+\s*```+', '', clean_response)
         clean_response = re.sub(r'````*\s*$', '', clean_response)
         clean_response = re.sub(r'^\s*````*', '', clean_response)
+        clean_response = re.sub(r'^\s*json\s*$', '', clean_response, flags=re.MULTILINE | re.IGNORECASE)
         # Strip "*A group of ragged men..." style image descriptions in italic
         clean_response = re.sub(r'^\*[A-Z][^*]{20,}\*$', '', clean_response, flags=re.MULTILINE)
         # Collapse excessive whitespace

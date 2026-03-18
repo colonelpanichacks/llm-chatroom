@@ -148,52 +148,24 @@ async def generate_response(model_id: str) -> bool | str:
     tool_calls = []
 
     try:
-        if tools:
-            # NON-STREAMING when tools are offered — lets Ollama parse tool calls properly
-            try:
-                chat_result = await asyncio.wait_for(
-                    chat_no_stream(ollama_model, messages, system_prompt, options=options or None, tools=tools, host=ollama_host),
-                    timeout=120,
-                )
+        # ALWAYS stream — text-based tool call extraction handles image prompts
+        async def _stream_response():
+            nonlocal full_response
+            async for chunk in chat_stream(ollama_model, messages, system_prompt, options=options or None, tools=None, host=ollama_host):
                 if kill_event.is_set():
                     await broadcast({"type": "end", "model_id": model_id, "name": display_name})
                     return False
-                full_response = chat_result.text
-                tool_calls = chat_result.tool_calls
-                # Send the text all at once
-                if full_response:
+                if isinstance(chunk, str):
+                    full_response += chunk
                     await broadcast({
                         "type": "token",
                         "model_id": model_id,
-                        "token": full_response,
+                        "token": chunk,
                     })
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 400:
-                    # Model doesn't support tools — fall through to streaming without tools
-                    print(f"[generate_response] {display_name} doesn't support tools, retrying without")
-                    tools = None
-                else:
-                    raise
+            return True
 
-        if not tools:
-            # STREAMING when no tools — normal text chat
-            async def _stream_response():
-                nonlocal full_response
-                async for chunk in chat_stream(ollama_model, messages, system_prompt, options=options or None, tools=None, host=ollama_host):
-                    if kill_event.is_set():
-                        await broadcast({"type": "end", "model_id": model_id, "name": display_name})
-                        return False
-                    if isinstance(chunk, str):
-                        full_response += chunk
-                        await broadcast({
-                            "type": "token",
-                            "model_id": model_id,
-                            "token": chunk,
-                        })
-                return True
-
-            result = await asyncio.wait_for(_stream_response(), timeout=120)
-            if result is False:
+        result = await asyncio.wait_for(_stream_response(), timeout=120)
+        if result is False:
                 return False
 
     except asyncio.TimeoutError:

@@ -371,11 +371,21 @@ function refreshModels() {
 
 function updateSliderFill(input) {
     const pct = ((input.value - input.min) / (input.max - input.min)) * 100;
-    input.style.background = `linear-gradient(to right, var(--accent) 0%, var(--accent) ${pct}%, var(--border) ${pct}%, var(--border) 100%)`;
+    const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#00ffc8';
+    const borderColor = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#333';
+    input.style.setProperty('background', `linear-gradient(to right, ${accentColor} 0%, ${accentColor} ${pct}%, ${borderColor} ${pct}%, ${borderColor} 100%)`, 'important');
 }
 
 function initAllSliderFills(container) {
-    container.querySelectorAll('input[type="range"]').forEach(updateSliderFill);
+    container.querySelectorAll('input[type="range"]').forEach(s => {
+        updateSliderFill(s);
+        // Ensure realtime updates on all platforms (mobile especially)
+        if (!s._fillWired) {
+            s.addEventListener('input', () => updateSliderFill(s));
+            s.addEventListener('change', () => updateSliderFill(s));
+            s._fillWired = true;
+        }
+    });
 }
 
 // ═══ Active Models ═══
@@ -746,13 +756,43 @@ function startStreaming(modelId, name, color) {
     scrollToBottom();
 }
 
+function liveClean(text) {
+    // Realtime cleanup — hide tool call JSON as it streams in
+    return text
+        // Strip complete {"generate_image": "..."} blocks
+        .replace(/\{\s*"generate_image"\s*:\s*"[^"]*"\s*\}/gi, '')
+        // Strip complete {"prompt": "..."} blocks and variants
+        .replace(/\{[^{}]*"[^"]*(?:prompt|generate)[^"]*"\s*:[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/gi, '')
+        // Strip [{"name": "generate_image", ...}] arrays
+        .replace(/\[\s*\{\s*"name"\s*:\s*"[^"]*image[^"]*"[\s\S]*?\}\s*\]/gi, '')
+        // Strip standalone {"name": "generate_image", "arguments": {...}} objects
+        .replace(/\{\s*"name"\s*:\s*"[^"]*image[^"]*"\s*,\s*"arguments"\s*:\s*\{[\s\S]*?\}\s*\}/gi, '')
+        // Strip code-fenced blocks with prompt/generate_image
+        .replace(/```[^`]*"[^"]*(?:prompt|generate_image)[^"]*"\s*:[^`]*```/gi, '')
+        // Strip [TOOL_CALLS] prefix
+        .replace(/\[TOOL_CALLS?\]/gi, '')
+        // Hide incomplete JSON being typed — opening brace followed by "generate or "prompt
+        .replace(/\{\s*"(?:generate_image|prompt|name)[^}]*$/i, '')
+        // Strip orphaned ``` and json tags
+        .replace(/```+\s*```*/g, '')
+        .replace(/^\s*```+\s*$/gm, '')
+        .replace(/^\s*json\s*$/gmi, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+}
+
 function appendToken(modelId, token) {
     const stream = streamingMessages[modelId];
     if (!stream) return;
 
     stream.rawText += token;
+    const displayText = liveClean(stream.rawText);
     const contentEl = stream.element.querySelector('.content');
-    contentEl.innerHTML = renderMarkdown(stream.rawText) + '<span class="streaming-indicator"></span>';
+    if (displayText) {
+        contentEl.innerHTML = renderMarkdown(displayText) + '<span class="streaming-indicator"></span>';
+    } else {
+        contentEl.innerHTML = '<span class="streaming-indicator"></span>';
+    }
     scrollToBottom();
 }
 

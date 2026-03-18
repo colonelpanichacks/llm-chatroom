@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Chatroom</title>
+    <link rel="stylesheet" href="/static/style.css?v=5">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js"></script>
+</head>
+<body>
+    <!-- Mobile menu toggle -->
+    <button id="mobile-menu-btn" onclick="toggleSidebar()">&#9776;</button>
+    <div id="sidebar-overlay" onclick="toggleSidebar()"></div>
+
+    <!-- Sidebar -->
+    <aside id="sidebar">
+        <div class="sidebar-header">
+            <h2>LLM Chatroom</h2>
+            <div class="header-actions">
+                <button id="settings-btn" onclick="openSettings()" title="Settings">&#9881;</button>
+                <button id="sidebar-close" onclick="toggleSidebar()">&times;</button>
+            </div>
+        </div>
+
+        <!-- Kill Button -->
+        <button id="kill-btn" onclick="sendKill()">KILL ALL</button>
+
+        <!-- New Session -->
+        <button id="new-session-btn" onclick="createSession()">+ New Session</button>
+
+        <!-- Sessions List -->
+        <div id="sessions-list"></div>
+
+        <!-- Active Models (compact, at bottom) -->
+        <div class="section sidebar-models">
+            <div class="section-header">Active Models</div>
+            <div id="active-models-list"></div>
+        </div>
+    </aside>
+
+    <!-- Settings Modal -->
+    <div id="settings-overlay-modal" class="settings-overlay" onclick="if(event.target===this)closeSettings()">
+        <div class="settings-modal">
+            <div class="settings-header">
+                <h3>Settings</h3>
+                <button class="settings-close" onclick="closeSettings()">&times;</button>
+            </div>
+
+            <!-- Add Model -->
+            <div class="settings-section">
+                <div class="settings-section-header collapsible" onclick="toggleSection(this)">
+                    <span>Add Model</span>
+                    <span class="collapse-icon">+</span>
+                </div>
+                <div class="settings-section-content collapsed" id="add-model-section">
+                    <input type="text" id="ollama-host" placeholder="Ollama host (default: localhost:11434)" value="http://localhost:11434">
+                    <select id="model-select">
+                        <option value="">Select a model...</option>
+                    </select>
+                    <button class="btn-sm" onclick="refreshModels()">Refresh Models</button>
+                    <input type="text" id="model-display-name" placeholder="Display name">
+                    <input type="color" id="model-color" value="#6c9f5e">
+                    <textarea id="model-system-prompt" placeholder="System prompt for this model..." rows="3"></textarea>
+                    <div class="param-group" title="Controls randomness. Higher = more creative and unpredictable. Lower = more focused and deterministic. 0 = always pick the most likely token.">
+                        <label>Temperature <span id="temp-val">0.7</span></label>
+                        <input type="range" id="model-temperature" min="0" max="2" step="0.05" value="0.7" oninput="document.getElementById('temp-val').textContent=this.value;updateSliderFill(this)">
+                    </div>
+                    <div class="param-group" title="Nucleus sampling. Only considers tokens within this cumulative probability. Lower = more focused on likely words. Higher = considers more options. Works with Temperature.">
+                        <label>Top P <span id="topp-val">0.9</span></label>
+                        <input type="range" id="model-top-p" min="0" max="1" step="0.05" value="0.9" oninput="document.getElementById('topp-val').textContent=this.value;updateSliderFill(this)">
+                    </div>
+                    <div class="param-group" title="Limits choices to the top K most likely tokens. Lower = more predictable. Higher = more diverse vocabulary. Works alongside Top P and Temperature.">
+                        <label>Top K <span id="topk-val">40</span></label>
+                        <input type="range" id="model-top-k" min="1" max="200" step="1" value="40" oninput="document.getElementById('topk-val').textContent=this.value;updateSliderFill(this)">
+                    </div>
+                    <div class="param-group" title="Penalizes repeated words and phrases. Higher = less repetition, more varied output. Too high can make responses incoherent. 1.0 = no penalty.">
+                        <label>Repeat Penalty <span id="rep-val">1.1</span></label>
+                        <input type="range" id="model-repeat-penalty" min="1.0" max="2.0" step="0.05" value="1.1" oninput="document.getElementById('rep-val').textContent=this.value;updateSliderFill(this)">
+                    </div>
+                    <div id="model-count-indicator" class="model-count"></div>
+                    <button class="btn-primary" onclick="addModel()">Add to Chat</button>
+                </div>
+            </div>
+
+            <!-- About You -->
+            <div class="settings-section">
+                <div class="settings-section-header collapsible" onclick="toggleSection(this)">
+                    <span>About You</span>
+                    <span class="collapse-icon">+</span>
+                </div>
+                <div class="settings-section-content collapsed">
+                    <textarea id="user-profile" placeholder="Tell the models about yourself..." rows="3"></textarea>
+                    <button class="btn-sm" onclick="saveProfile()">Save</button>
+                </div>
+            </div>
+
+            <!-- Preferences -->
+            <div class="settings-section">
+                <div class="settings-section-header collapsible" onclick="toggleSection(this)">
+                    <span>Preferences</span>
+                    <span class="collapse-icon">+</span>
+                </div>
+                <div class="settings-section-content collapsed">
+                    <div class="toggle-row">
+                        <span class="toggle-label">Auto Chat</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="auto-chat-toggle" onchange="toggleAutoChat()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <textarea id="auto-chat-prompt" placeholder="Initial prompt (optional)..." rows="2"></textarea>
+                    <div class="toggle-row">
+                        <span class="toggle-label">Auto Scroll</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="auto-scroll-toggle" checked onchange="toggleAutoScroll()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Model Memory -->
+            <div class="settings-section">
+                <div class="settings-section-header collapsible" onclick="toggleSection(this)">
+                    <span>Model Memory</span>
+                    <span class="collapse-icon">+</span>
+                </div>
+                <div class="settings-section-content collapsed" id="model-memory-section">
+                    <p class="settings-hint">Persistent knowledge each model always remembers, across all sessions.</p>
+                    <div id="model-memory-list"></div>
+                </div>
+            </div>
+
+            <!-- Clear History -->
+            <div class="settings-section">
+                <button class="btn-sm btn-danger" onclick="clearHistory()">Clear Current Session</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Chat -->
+    <main id="chat-area">
+        <div id="messages"></div>
+        <div id="input-bar">
+            <textarea id="user-input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" rows="1"></textarea>
+            <button id="send-btn" onclick="sendMessage()">Send</button>
+        </div>
+    </main>
+
+    <script src="/static/app.js?v=5"></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+venv/
+.venv/
+chatroom_config.json
+chatroom_config.json.bak
+sessions/
+static/images/
+.DS_Store

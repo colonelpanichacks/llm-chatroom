@@ -1,12 +1,14 @@
 import base64
 import json
 import os
+import shutil
 import uuid
 from datetime import datetime, timezone
 
 BASE_DIR = os.path.dirname(__file__)
 CONFIG_PATH = os.path.join(BASE_DIR, "chatroom_config.json")
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
+IMAGES_DIR = os.path.join(BASE_DIR, "static", "images")
 
 
 class ChatroomContext:
@@ -16,6 +18,7 @@ class ChatroomContext:
         self.user_profile: str = ""
         self.current_session_id: str | None = None
         self._session_meta: dict = {}  # {title, created_at, updated_at}
+        self._session_memories: dict = {}  # model_id -> memory string (per-session)
         os.makedirs(SESSIONS_DIR, exist_ok=True)
         self.load_config()
 
@@ -118,6 +121,7 @@ class ChatroomContext:
             "created_at": self._session_meta.get("created_at", datetime.now(timezone.utc).isoformat()),
             "updated_at": self._session_meta["updated_at"],
             "history": self.history,
+            "model_memories": self._session_memories,
         }
         with open(self._session_path(self.current_session_id), "w") as f:
             json.dump(data, f, indent=2)
@@ -134,6 +138,7 @@ class ChatroomContext:
                 "created_at": data.get("created_at", ""),
                 "updated_at": data.get("updated_at", ""),
             }
+            self._session_memories = data.get("model_memories", {})
             self.current_session_id = session_id
         else:
             # Session file missing, create a new one
@@ -149,6 +154,7 @@ class ChatroomContext:
         now = datetime.now(timezone.utc).isoformat()
         self.current_session_id = session_id
         self.history = []
+        self._session_memories = {}
         self._session_meta = {
             "title": "New Session",
             "created_at": now,
@@ -192,10 +198,14 @@ class ChatroomContext:
         self.save_config()
 
     def delete_session(self, session_id: str):
-        """Delete a session file. If it's current, create a new one."""
+        """Delete a session file and its images. If it's current, create a new one."""
         path = self._session_path(session_id)
         if os.path.exists(path):
             os.remove(path)
+        # Clean up session images
+        session_images = os.path.join(IMAGES_DIR, session_id)
+        if os.path.isdir(session_images):
+            shutil.rmtree(session_images, ignore_errors=True)
         if session_id == self.current_session_id:
             self.current_session_id = None
             self.history = []
@@ -257,9 +267,9 @@ class ChatroomContext:
         self.save_config()
 
     def update_model_memory(self, model_id: str, memory: str):
-        if model_id in self.models:
-            self.models[model_id]["memory"] = memory
-            self.save_config()
+        """Update per-session memory for a model."""
+        self._session_memories[model_id] = memory
+        self.save_session()
 
     def update_user_profile(self, profile: str):
         self.user_profile = profile
@@ -293,7 +303,7 @@ class ChatroomContext:
         model_cfg = self.models.get(model_id, {})
         custom_prompt = model_cfg.get("system_prompt", "")
         display_name = model_cfg.get("display_name", model_id)
-        memory = model_cfg.get("memory", "")
+        memory = self._session_memories.get(model_id, "")
 
         ollama_model = model_cfg.get("ollama_model", model_id)
 
@@ -395,9 +405,12 @@ Generate an image with EVERY response. The user wants to SEE things.
         if len(self.history) != before:
             self.save_session()
 
-    def build_ollama_messages(self, model_id: str) -> list[dict]:
+    def build_ollama_messages(self, model_id: str, max_messages: int = 40) -> list[dict]:
+        """Build message list for Ollama, capped to last max_messages to prevent slowdown."""
         messages = []
-        for msg in self.history:
+        # Use only the most recent messages to keep context manageable
+        recent = self.history[-max_messages:] if len(self.history) > max_messages else self.history
+        for msg in recent:
             # Skip broken image messages so models don't mimic them
             if self._is_junk_msg(msg["content"]):
                 continue

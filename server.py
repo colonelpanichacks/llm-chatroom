@@ -3,6 +3,7 @@ import json
 import os
 import re
 import random
+import time
 import httpx
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -24,6 +25,17 @@ generation_lock = asyncio.Lock()
 current_generation_task: asyncio.Task | None = None
 active_tasks: set[asyncio.Task] = set()
 turns_since_image = 0  # track turns since last image generation
+_last_user_msg_time = 0.0  # for queue vs interrupt detection
+_INTERRUPT_WINDOW = 2.0  # seconds — second Enter within this window = interrupt
+
+# Stable Diffusion settings (mutable at runtime via WebSocket)
+sd_settings = {
+    "steps": 4,
+    "guidance_scale": 0.0,
+    "width": 768,
+    "height": 768,
+    "negative_prompt": "",
+}
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 IMAGES_DIR = os.path.join(STATIC_DIR, "images")
@@ -109,12 +121,17 @@ async def generate_response(model_id: str) -> bool | str:
         "color": color,
     })
 
-    # Provide image gen tool — only throttle if the very last message was an image
+    # Provide image gen tool — only block if THIS model's last message was an image
     global turns_since_image
     offer_tool = False
     if image_gen_available():
-        last_is_img = (ctx.history and ctx.history[-1].get("content", "").startswith("!["))
-        offer_tool = not last_is_img
+        # Find this model's most recent message
+        my_last_is_img = False
+        for msg in reversed(ctx.history):
+            if msg.get("role") == model_id:
+                my_last_is_img = msg.get("content", "").startswith("![")
+                break
+        offer_tool = not my_last_is_img
     tools = [IMAGE_GEN_TOOL] if offer_tool else None
 
     # Nudge models to generate images every 3 turns
@@ -199,6 +216,21 @@ async def generate_response(model_id: str) -> bool | str:
 
         # === STEP 1: Extract text-based tool calls from RAW response (before stripping) ===
         if not tool_calls and raw_response:
+            # Try to parse JSON tool call arrays that models dump as text
+            json_match = re.search(r'\[\s*\{[^[]*?"name"\s*:\s*"[^"]*image[^"]*"[^[]*?"prompt"\s*:\s*"([^"]{10,})"', raw_response, re.IGNORECASE | re.DOTALL)
+            if json_match:
+                extracted = json_match.group(1).strip()
+                print(f"[text-tool-extract] Extracted JSON tool call prompt from {display_name}: {extracted[:80]}")
+                tool_calls.append({"function": {"name": "generate_image", "arguments": {"prompt": extracted}}})
+
+            # Catch any "prompt": "..." pattern in JSON blocks (models invent endless formats)
+            if not tool_calls:
+                prompt_match = re.search(r'"prompt"\s*:\s*"([^"]{10,})"', raw_response, re.IGNORECASE)
+                if prompt_match:
+                    extracted = prompt_match.group(1).strip()
+                    print(f"[text-tool-extract] Extracted prompt from JSON in {display_name}: {extracted[:80]}")
+                    tool_calls.append({"function": {"name": "generate_image", "arguments": {"prompt": extracted}}})
+
             from urllib.parse import unquote
             # First, try to extract from URL-encoded generate_image links (models' favorite fake format)
             url_match = re.search(r'generate_image\?prompt=([^\s\)"\*]+)', raw_response)
@@ -233,7 +265,8 @@ async def generate_response(model_id: str) -> bool | str:
                     r'generate_image\s*:\s*["\']([^"\']{10,})["\']',
                     # *generates_image*: description
                     r'\*generates?_image\*\s*:?\s*(.{10,}?)(?:\n\n|\n\*|$)',
-                    # *generates image* or (generates image) with no prompt — use surrounding context
+                    # "Generate an image" or "Generate a visual of" followed by quoted text
+                    r'[Gg]enerate\s+(?:an?\s+)?(?:image|visual|picture|photo)\s+(?:of\s+)?"([^"]{10,})"',
                     # Catch-all: first long quoted string in the response as last resort
                 ]
                 raw_lower = raw_response.lower()
@@ -268,6 +301,8 @@ async def generate_response(model_id: str) -> bool | str:
         # Strip (generates image) and *generates image* style markers
         clean_response = re.sub(r'\(generates?\s+image\)', '', clean_response, flags=re.IGNORECASE)
         clean_response = re.sub(r'\*generates?\s+image\*', '', clean_response, flags=re.IGNORECASE)
+        # Strip "Generate an image/visual/picture of "quoted text"" lines
+        clean_response = re.sub(r'^.*[Gg]enerate\s+(?:an?\s+)?(?:image|visual|picture|photo)\s+(?:of\s+)?"[^"]*".*$', '', clean_response, flags=re.MULTILINE)
         # Strip *generates_image?prompt=...* style
         clean_response = re.sub(r'\*generates?_image[^*]*\*', '', clean_response, flags=re.IGNORECASE)
         # Strip fake imgur/external image links
@@ -287,9 +322,19 @@ async def generate_response(model_id: str) -> bool | str:
         clean_response = re.sub(r'\*Generating Image\.{0,3}\*', '', clean_response, flags=re.IGNORECASE)
         clean_response = re.sub(r'\*Awaiting[^*]*\*', '', clean_response, flags=re.IGNORECASE)
         clean_response = re.sub(r'\*Image generated\*', '', clean_response, flags=re.IGNORECASE)
-        # Strip JSON-like tool call blocks
-        clean_response = re.sub(r'\{"name":\s*"generate_image".*?\}\s*\}', '', clean_response, flags=re.DOTALL)
-        clean_response = re.sub(r'"name":\s*"generate_image".*?"prompt":\s*"[^"]*".*?\}?\}?', '', clean_response, flags=re.DOTALL)
+        # Strip JSON-like tool call blocks (case-insensitive — models output generate_IMAGE etc)
+        clean_response = re.sub(r'\{"name":\s*"generate_image".*?\}\s*\}', '', clean_response, flags=re.DOTALL | re.IGNORECASE)
+        clean_response = re.sub(r'"name":\s*"generate_image".*?"prompt":\s*"[^"]*".*?\}?\}?', '', clean_response, flags=re.DOTALL | re.IGNORECASE)
+        # Strip JSON arrays of tool calls: [{"name": "generate_image", ...}]
+        clean_response = re.sub(r'\[\s*\{\s*"name"\s*:\s*"generate[_\s]?image"[\s\S]*?\}\s*\]', '', clean_response, flags=re.IGNORECASE)
+        # Strip any remaining {"name": "..._image...", "arguments": {...}} blocks
+        clean_response = re.sub(r'\{[^}]*"name"\s*:\s*"[^"]*image[^"]*"[^}]*"arguments"\s*:\s*\{[^}]*\}\s*\}', '', clean_response, flags=re.IGNORECASE)
+        # Nuclear: strip ANY JSON object/block that contains "prompt" key (models invent endless formats)
+        clean_response = re.sub(r'\{[^{}]*"prompt"\s*:[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', '', clean_response, flags=re.IGNORECASE | re.DOTALL)
+        # Strip any code-fenced block containing "prompt" (catches all variations)
+        clean_response = re.sub(r'```[^`]*"prompt"\s*:[^`]*```', '', clean_response, flags=re.IGNORECASE | re.DOTALL)
+        # Strip "Generate image" standalone lines
+        clean_response = re.sub(r'^\s*Generate\s+image\.?\s*$', '', clean_response, flags=re.MULTILINE | re.IGNORECASE)
         clean_response = re.sub(r'^In this image,?\s+we\s+(can\s+)?see\b.*$', '', clean_response, flags=re.MULTILINE | re.IGNORECASE)
 
         # Strip roleplay — models writing as other participants or prefixing with their own name
@@ -299,8 +344,8 @@ async def generate_response(model_id: str) -> bool | str:
             # **name**: or **name**:  (bold name, colon outside or inside)
             clean_response = re.sub(rf'\*\*{re.escape(name)}\*\*\s*:', '', clean_response, flags=re.IGNORECASE)
             clean_response = re.sub(rf'\*\*{re.escape(name)}:\*\*\s*', '', clean_response, flags=re.IGNORECASE)
-            # [name]: prefix
-            clean_response = re.sub(rf'^\[{re.escape(name)}\]:\s*', '', clean_response, flags=re.MULTILINE | re.IGNORECASE)
+            # [name] or [name]: anywhere in text
+            clean_response = re.sub(rf'\[{re.escape(name)}\]:?\s*', '', clean_response, flags=re.IGNORECASE)
         # Strip lines where model writes dialogue for OTHER participants (full lines)
         other_names = [cfg.get("display_name", mid) for mid, cfg in ctx.models.items() if mid != model_id]
         other_names.append("User")
@@ -328,6 +373,10 @@ async def generate_response(model_id: str) -> bool | str:
 
         # Light degenerate check — only catch truly broken output
         clean_response = re.sub(r'<\|[^|]*\|>', '', clean_response).strip()
+        # Strip short image reference junk (img-1, img_6, image-3, etc)
+        clean_response = re.sub(r'^\s*img[-_]?\d+\.?\s*$', '', clean_response, flags=re.MULTILINE | re.IGNORECASE)
+        clean_response = re.sub(r'^\s*image[-_]?\d+\.?\s*$', '', clean_response, flags=re.MULTILINE | re.IGNORECASE)
+        clean_response = clean_response.strip()
 
         is_degenerate = False
         if not clean_response:
@@ -349,27 +398,41 @@ async def generate_response(model_id: str) -> bool | str:
             ctx.add_message(model_id, display_name, clean_response)
             turns_since_image += 1
 
-    # Handle tool calls (image generation)
+    # Handle tool calls (image generation) — appended to the model's streaming message
     for tc in tool_calls:
         func = tc.get("function", {})
         if func.get("name") == "generate_image":
             prompt = func.get("arguments", {}).get("prompt", "")
             if prompt:
-                await broadcast({"type": "system", "message": f"{display_name} is generating: {prompt}"})
-                img_url = await generate_image(prompt)
+                # Show spinner placeholder inline in the stream
+                await broadcast({
+                    "type": "image_inline_start",
+                    "model_id": model_id,
+                    "prompt": prompt,
+                })
+                img_url = await generate_image(
+                                    prompt,
+                                    steps=sd_settings["steps"],
+                                    guidance_scale=sd_settings["guidance_scale"],
+                                    width=sd_settings["width"],
+                                    height=sd_settings["height"],
+                                    negative_prompt=sd_settings["negative_prompt"],
+                                    session_id=ctx.current_session_id,
+                                )
                 if img_url:
                     img_msg = f"![Generated image]({img_url})"
                     ctx.add_message(model_id, display_name, img_msg, images=[img_url])
                     turns_since_image = 0
                     await broadcast({
-                        "type": "message",
-                        "role": model_id,
-                        "name": display_name,
-                        "content": img_msg,
-                        "color": color,
+                        "type": "image_inline_ready",
+                        "model_id": model_id,
+                        "url": img_url,
                     })
                 else:
-                    await broadcast({"type": "system", "message": "Image generation failed."})
+                    await broadcast({
+                        "type": "image_inline_failed",
+                        "model_id": model_id,
+                    })
 
     await broadcast({
         "type": "end",
@@ -380,7 +443,8 @@ async def generate_response(model_id: str) -> bool | str:
 
 
 async def respond_to_user():
-    """All active models respond to the user's latest message. Runs under lock."""
+    """All active models respond to the user's latest message, then auto-start auto-chat."""
+    global auto_chat_active, current_generation_task
     try:
         model_ids = list(ctx.models.keys())
         # Show thinking indicators for all models about to respond
@@ -397,6 +461,13 @@ async def respond_to_user():
                 if kill_event.is_set():
                     break
                 await generate_response(model_id)
+
+        # Auto-start auto-chat if 2+ models and not killed
+        if len(ctx.models) >= 2 and not kill_event.is_set() and not auto_chat_active:
+            auto_chat_active = True
+            kill_event.clear()
+            current_generation_task = asyncio.create_task(auto_chat_loop())
+            await broadcast({"type": "auto_chat_status", "active": True})
     except asyncio.CancelledError:
         pass
 
@@ -468,7 +539,7 @@ async def kill_all():
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
-    global auto_chat_active, current_generation_task
+    global auto_chat_active, current_generation_task, _last_user_msg_time
     await ws.accept()
     connected_clients.append(ws)
 
@@ -490,6 +561,9 @@ async def websocket_endpoint(ws: WebSocket):
         "auto_chat_active": auto_chat_active,
         "sessions": ctx.list_sessions(),
         "current_session_id": ctx.current_session_id,
+        "sd_settings": sd_settings,
+        "sd_available": image_gen_available(),
+        "model_memories": ctx._session_memories,
     }))
 
     try:
@@ -507,7 +581,15 @@ async def websocket_endpoint(ws: WebSocket):
                     prompt = img_cmd.group(1).strip()
                     if image_gen_available():
                         await broadcast({"type": "system", "message": f"Generating image: {prompt}..."})
-                        img_url = await generate_image(prompt)
+                        img_url = await generate_image(
+                                    prompt,
+                                    steps=sd_settings["steps"],
+                                    guidance_scale=sd_settings["guidance_scale"],
+                                    width=sd_settings["width"],
+                                    height=sd_settings["height"],
+                                    negative_prompt=sd_settings["negative_prompt"],
+                                    session_id=ctx.current_session_id,
+                                )
                         if img_url:
                             img_msg = f"![Generated image]({img_url})"
                             ctx.add_message("user", "User", img_msg, images=[img_url])
@@ -530,9 +612,36 @@ async def websocket_endpoint(ws: WebSocket):
                     "name": "User",
                     "content": content,
                 })
-                # If auto-chat is running, the message is in history and
-                # models will see it on their next turn — no extra action needed.
-                if not auto_chat_active:
+
+                now = time.time()
+                double_tap = (now - _last_user_msg_time) < _INTERRUPT_WINDOW
+                _last_user_msg_time = now
+
+                if auto_chat_active:
+                    if double_tap:
+                        # INTERRUPT — stop everything and respond immediately
+                        auto_chat_active = False
+                        kill_event.set()
+                        if current_generation_task and not current_generation_task.done():
+                            current_generation_task.cancel()
+                            try:
+                                await current_generation_task
+                            except (asyncio.CancelledError, Exception):
+                                pass
+                            current_generation_task = None
+                        if generation_lock.locked():
+                            generation_lock = asyncio.Lock()
+                        kill_event.clear()
+                        await broadcast({"type": "killed"})
+                        # Start fresh response cycle
+                        task = asyncio.create_task(respond_to_user())
+                        active_tasks.add(task)
+                        task.add_done_callback(active_tasks.discard)
+                    else:
+                        # QUEUE — message is in history, models see it next turn
+                        await broadcast({"type": "queued"})
+                else:
+                    # No auto-chat running, respond normally
                     task = asyncio.create_task(respond_to_user())
                     active_tasks.add(task)
                     task.add_done_callback(active_tasks.discard)
@@ -674,7 +783,7 @@ async def websocket_endpoint(ws: WebSocket):
                 if auto_chat_active:
                     await kill_all()
                 session_id = ctx.create_session()
-                await broadcast({"type": "session_loaded", "history": [], "session_id": session_id})
+                await broadcast({"type": "session_loaded", "history": [], "session_id": session_id, "model_memories": {}})
                 await broadcast({
                     "type": "sessions_list",
                     "sessions": ctx.list_sessions(),
@@ -693,6 +802,7 @@ async def websocket_endpoint(ws: WebSocket):
                         "type": "session_loaded",
                         "history": ctx.history,
                         "session_id": ctx.current_session_id,
+                        "model_memories": ctx._session_memories,
                     })
                     await broadcast({
                         "type": "sessions_list",
@@ -708,6 +818,7 @@ async def websocket_endpoint(ws: WebSocket):
                     "type": "session_loaded",
                     "history": ctx.history,
                     "session_id": ctx.current_session_id,
+                    "model_memories": ctx._session_memories,
                 })
                 await broadcast({
                     "type": "sessions_list",
@@ -732,6 +843,17 @@ async def websocket_endpoint(ws: WebSocket):
                     "model_id": model_id,
                     "config": ctx.models[model_id],
                 })
+
+            elif action == "update_sd_settings":
+                for key in ("steps", "guidance_scale", "width", "height", "negative_prompt"):
+                    if key in data:
+                        sd_settings[key] = data[key]
+                # Clamp values
+                sd_settings["steps"] = max(1, min(50, int(sd_settings["steps"])))
+                sd_settings["guidance_scale"] = max(0.0, min(20.0, float(sd_settings["guidance_scale"])))
+                sd_settings["width"] = max(256, min(2048, int(sd_settings["width"])))
+                sd_settings["height"] = max(256, min(2048, int(sd_settings["height"])))
+                await broadcast({"type": "sd_settings", "sd_settings": sd_settings})
 
     except WebSocketDisconnect:
         try:

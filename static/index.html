@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LLM Chatroom</title>
-    <link rel="stylesheet" href="/static/style.css?v=5">
+    <link rel="stylesheet" href="/static/style.css?v=9">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js"></script>
@@ -35,8 +35,18 @@
 
         <!-- Active Models (compact, at bottom) -->
         <div class="section sidebar-models">
-            <div class="section-header">Active Models</div>
+            <div class="section-header models-header-row">
+                <span>Active Models</span>
+                <div class="auto-chat-inline">
+                    <span class="auto-chat-label">Auto</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="auto-chat-toggle" checked onchange="toggleAutoChat()">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
             <div id="active-models-list"></div>
+            <textarea id="auto-chat-prompt" class="auto-chat-prompt-sidebar" placeholder="Initial prompt (optional)..." rows="2"></textarea>
         </div>
     </aside>
 
@@ -50,11 +60,8 @@
 
             <!-- Add Model -->
             <div class="settings-section">
-                <div class="settings-section-header collapsible" onclick="toggleSection(this)">
-                    <span>Add Model</span>
-                    <span class="collapse-icon">+</span>
-                </div>
-                <div class="settings-section-content collapsed" id="add-model-section">
+                <div class="settings-section-label">Add Model</div>
+                <div class="settings-section-content" id="add-model-section">
                     <input type="text" id="ollama-host" placeholder="Ollama host (default: localhost:11434)" value="http://localhost:11434">
                     <select id="model-select">
                         <option value="">Select a model...</option>
@@ -86,55 +93,73 @@
 
             <!-- About You -->
             <div class="settings-section">
-                <div class="settings-section-header collapsible" onclick="toggleSection(this)">
-                    <span>About You</span>
-                    <span class="collapse-icon">+</span>
-                </div>
-                <div class="settings-section-content collapsed">
+                <div class="settings-section-label">About You</div>
+                <div class="settings-section-content">
                     <textarea id="user-profile" placeholder="Tell the models about yourself..." rows="3"></textarea>
                     <button class="btn-sm" onclick="saveProfile()">Save</button>
                 </div>
             </div>
 
-            <!-- Preferences -->
-            <div class="settings-section">
-                <div class="settings-section-header collapsible" onclick="toggleSection(this)">
-                    <span>Preferences</span>
-                    <span class="collapse-icon">+</span>
-                </div>
-                <div class="settings-section-content collapsed">
-                    <div class="toggle-row">
-                        <span class="toggle-label">Auto Chat</span>
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="auto-chat-toggle" onchange="toggleAutoChat()">
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>
-                    <textarea id="auto-chat-prompt" placeholder="Initial prompt (optional)..." rows="2"></textarea>
-                    <div class="toggle-row">
-                        <span class="toggle-label">Auto Scroll</span>
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="auto-scroll-toggle" checked onchange="toggleAutoScroll()">
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>
-                </div>
-            </div>
-
             <!-- Model Memory -->
             <div class="settings-section">
-                <div class="settings-section-header collapsible" onclick="toggleSection(this)">
-                    <span>Model Memory</span>
-                    <span class="collapse-icon">+</span>
-                </div>
-                <div class="settings-section-content collapsed" id="model-memory-section">
-                    <p class="settings-hint">Persistent knowledge each model always remembers, across all sessions.</p>
-                    <div id="model-memory-list"></div>
+                <div class="settings-section-label">Model Memory</div>
+                <p class="settings-hint">Persistent knowledge each model always remembers, across all sessions.</p>
+                <div id="model-memory-list"></div>
+            </div>
+
+            <!-- Image Generation -->
+            <div class="settings-section" id="sd-settings-section" style="display:none">
+                <div class="settings-section-label">Image Generation <span class="sd-model-badge">SDXL-Lightning</span></div>
+                <div class="sd-settings-grid">
+                    <div class="param-group" title="Number of denoising steps. SDXL-Lightning is optimized for 4 steps. More steps = slower but potentially more detail.">
+                        <label>Steps <span id="sd-steps-val">4</span></label>
+                        <input type="range" id="sd-steps" min="1" max="20" step="1" value="4"
+                            oninput="document.getElementById('sd-steps-val').textContent=this.value;updateSliderFill(this);updateSdSetting('steps',parseInt(this.value))">
+                    </div>
+                    <div class="param-group" title="How closely to follow the prompt. 0 = pure Lightning speed (recommended). Higher = more prompt adherence but slower/different style.">
+                        <label>Guidance Scale <span id="sd-cfg-val">0.0</span></label>
+                        <input type="range" id="sd-guidance" min="0" max="15" step="0.5" value="0"
+                            oninput="document.getElementById('sd-cfg-val').textContent=this.value;updateSliderFill(this);updateSdSetting('guidance_scale',parseFloat(this.value))">
+                    </div>
+                    <div class="param-group" title="Output image width in pixels. 768 is a good balance of speed and quality.">
+                        <label>Width <span id="sd-width-val">768</span>px</label>
+                        <input type="range" id="sd-width" min="256" max="2048" step="64" value="768"
+                            oninput="document.getElementById('sd-width-val').textContent=this.value;updateSliderFill(this);updateSdSetting('width',parseInt(this.value))">
+                    </div>
+                    <div class="param-group" title="Output image height in pixels. 768 is a good balance of speed and quality.">
+                        <label>Height <span id="sd-height-val">768</span>px</label>
+                        <input type="range" id="sd-height" min="256" max="2048" step="64" value="768"
+                            oninput="document.getElementById('sd-height-val').textContent=this.value;updateSliderFill(this);updateSdSetting('height',parseInt(this.value))">
+                    </div>
+                    <div class="param-group sd-full-width" title="Things to avoid in the generated image.">
+                        <label>Negative Prompt</label>
+                        <textarea id="sd-negative-prompt" placeholder="blurry, low quality, distorted, watermark..." rows="2"
+                            onchange="updateSdSetting('negative_prompt',this.value)"></textarea>
+                    </div>
+                    <div class="sd-resolution-presets">
+                        <button class="btn-sm sd-preset" onclick="setSdPreset(512,512)">512²</button>
+                        <button class="btn-sm sd-preset" onclick="setSdPreset(768,768)">768²</button>
+                        <button class="btn-sm sd-preset active" onclick="setSdPreset(1024,1024)">1024²</button>
+                        <button class="btn-sm sd-preset" onclick="setSdPreset(1024,768)">1024×768</button>
+                        <button class="btn-sm sd-preset" onclick="setSdPreset(768,1024)">768×1024</button>
+                    </div>
                 </div>
             </div>
 
-            <!-- Clear History -->
+            <!-- Preferences -->
             <div class="settings-section">
+                <div class="settings-section-label">Preferences</div>
+                <div class="toggle-row">
+                    <span class="toggle-label">Auto Scroll</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="auto-scroll-toggle" checked onchange="toggleAutoScroll()">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Danger Zone -->
+            <div class="settings-section settings-danger-zone">
                 <button class="btn-sm btn-danger" onclick="clearHistory()">Clear Current Session</button>
             </div>
         </div>
@@ -149,6 +174,6 @@
         </div>
     </main>
 
-    <script src="/static/app.js?v=5"></script>
+    <script src="/static/app.js?v=9"></script>
 </body>
 </html>

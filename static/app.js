@@ -1,7 +1,8 @@
 let ws;
-let autoChatActive = false;
+let autoChatActive = true;
 let streamingMessages = {}; // model_id -> element
 let currentSessionId = null;
+let sessionMemories = {}; // model_id -> memory string (per-session)
 
 // Markdown setup
 marked.setOptions({
@@ -63,8 +64,13 @@ function handleMessage(data) {
                 currentSessionId = data.current_session_id;
                 renderSessions(data.sessions, data.current_session_id);
             }
-            // Model memory
+            // Model memory (per-session)
+            sessionMemories = data.model_memories || {};
             renderModelMemory();
+            // SD settings
+            if (data.sd_available) {
+                loadSdSettings(data.sd_settings);
+            }
             break;
 
         case 'available_models':
@@ -91,6 +97,22 @@ function handleMessage(data) {
 
         case 'end':
             endStreaming(data.model_id);
+            break;
+
+        case 'image_inline_start':
+            showInlineImageSpinner(data.model_id, data.prompt);
+            break;
+
+        case 'image_inline_ready':
+            replaceInlineImageSpinner(data.model_id, data.url);
+            break;
+
+        case 'image_inline_failed':
+            failInlineImageSpinner(data.model_id);
+            break;
+
+        case 'queued':
+            showQueuedIndicator();
             break;
 
         case 'error':
@@ -121,6 +143,10 @@ function handleMessage(data) {
             }
             break;
 
+        case 'sd_settings':
+            loadSdSettings(data.sd_settings);
+            break;
+
         case 'auto_chat_status':
             autoChatActive = data.active;
             updateAutoChatButton();
@@ -135,7 +161,7 @@ function handleMessage(data) {
             for (const mid of Object.keys(thinkingElements)) {
                 removeThinking(mid);
             }
-            addSystemMessage(data.message);
+            if (data.message) addSystemMessage(data.message);
             break;
 
         case 'history_cleared':
@@ -151,10 +177,12 @@ function handleMessage(data) {
 
         case 'session_loaded':
             currentSessionId = data.session_id;
+            sessionMemories = data.model_memories || {};
             document.getElementById('messages').innerHTML = '';
             if (data.history && data.history.length) {
                 loadHistory(data.history);
             }
+            renderModelMemory();
             break;
     }
 }
@@ -270,9 +298,9 @@ function openSettings() {
     overlay.classList.add('open');
     // Refresh model memory when opening
     renderModelMemory();
-    // Init slider fills in settings
-    const addModelSection = document.getElementById('add-model-section');
-    if (addModelSection) initAllSliderFills(addModelSection);
+    // Init all slider fills in settings
+    const modal = overlay.querySelector('.settings-modal');
+    if (modal) initAllSliderFills(modal);
 }
 
 function closeSettings() {
@@ -295,7 +323,7 @@ function renderModelMemory() {
     for (const [mid, cfg] of Object.entries(activeModels)) {
         const item = document.createElement('div');
         item.className = 'memory-item';
-        const memory = cfg.memory || '';
+        const memory = sessionMemories[mid] || '';
         item.innerHTML = `
             <div class="memory-item-header">
                 <span class="dot" style="background:${cfg.color}"></span>
@@ -381,6 +409,11 @@ function renderActiveModels() {
             <button class="remove-btn" onclick="removeModel('${mid}')" title="Remove">&times;</button>
             <div class="model-settings" id="settings-${CSS.escape(mid)}">
                 <div class="param-group">
+                    <label>Display Name</label>
+                    <input type="text" value="${escapeHtml(cfg.display_name)}" placeholder="Model name..."
+                        onchange="renameModel('${mid}', this.value)">
+                </div>
+                <div class="param-group">
                     <label>Ollama Host</label>
                     <input type="text" value="${escapeHtml(host)}"
                         onchange="updateModelParam('${mid}','ollama_host',this.value)">
@@ -421,6 +454,17 @@ function renderActiveModels() {
 function toggleModelSettings(modelId) {
     const el = document.getElementById('settings-' + CSS.escape(modelId));
     if (el) el.classList.toggle('open');
+}
+
+function renameModel(modelId, newName) {
+    const name = newName.trim();
+    if (!name) return;
+    if (activeModels[modelId]) {
+        activeModels[modelId].display_name = name;
+    }
+    safeSend({ action: 'update_model', model_id: modelId, display_name: name });
+    // Update the name in the model card immediately
+    renderActiveModels();
 }
 
 function updateModelColor(modelId, color, card) {
@@ -577,6 +621,86 @@ function createMessageElement(name, content, color, isStreaming = false) {
     return msg;
 }
 
+// ═══ Inline Image Generation (appended to streaming message) ═══
+
+function showInlineImageSpinner(modelId, prompt) {
+    const stream = streamingMessages[modelId];
+    if (!stream) return;
+    const contentEl = stream.element.querySelector('.content');
+    // Remove streaming indicator, append spinner
+    const indicator = contentEl.querySelector('.streaming-indicator');
+    if (indicator) indicator.remove();
+    const placeholder = document.createElement('div');
+    placeholder.className = 'image-placeholder';
+    placeholder.innerHTML = `
+        <div class="image-spinner"></div>
+        <div class="image-gen-prompt">
+            <div class="image-gen-label"><span class="tool-icon">&#9998;</span> generating image</div>
+            <span class="prompt-text">${escapeHtml(prompt)}</span>
+        </div>
+    `;
+    contentEl.appendChild(placeholder);
+    scrollToBottom();
+}
+
+function replaceInlineImageSpinner(modelId, url) {
+    const stream = streamingMessages[modelId];
+    if (!stream) return;
+    const contentEl = stream.element.querySelector('.content');
+    const placeholder = contentEl.querySelector('.image-placeholder');
+    if (placeholder) {
+        const img = document.createElement('img');
+        img.src = url;
+        img.alt = 'Generated image';
+        img.onload = () => scrollToBottom();
+        img.onerror = () => { img.style.display = 'none'; };
+        placeholder.replaceWith(img);
+    }
+    // Append back to rawText so endStreaming preserves it
+    stream.rawText += `\n\n![Generated image](${url})`;
+    scrollToBottom();
+}
+
+function failInlineImageSpinner(modelId) {
+    const stream = streamingMessages[modelId];
+    if (!stream) return;
+    const contentEl = stream.element.querySelector('.content');
+    const placeholder = contentEl.querySelector('.image-placeholder');
+    if (placeholder) {
+        placeholder.innerHTML = '<span class="image-gen-failed">Image generation failed</span>';
+    }
+}
+
+function showQueuedIndicator() {
+    // Remove any previous queued styling
+    document.querySelectorAll('.message-queued').forEach(el => el.classList.remove('message-queued'));
+    document.querySelectorAll('.queued-badge').forEach(el => el.remove());
+
+    // Find the last user message and mark it as queued
+    const messages = document.querySelectorAll('#messages .message');
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const sender = messages[i].querySelector('.sender');
+        if (sender && sender.textContent === 'User') {
+            messages[i].classList.add('message-queued');
+            const badge = document.createElement('div');
+            badge.className = 'queued-badge';
+            badge.innerHTML = `
+                <span class="queued-dot"></span>
+                <span class="queued-text">QUEUED</span>
+                <span class="queued-hint">send again to interrupt</span>
+            `;
+            messages[i].querySelector('.body').appendChild(badge);
+            scrollToBottom();
+            // Auto-remove after 6 seconds
+            setTimeout(() => {
+                messages[i]?.classList.remove('message-queued');
+                badge.remove();
+            }, 6000);
+            break;
+        }
+    }
+}
+
 function addSystemMessage(text) {
     const container = document.getElementById('messages');
     const msg = document.createElement('div');
@@ -600,7 +724,7 @@ function showThinking(modelId, name, color) {
     msg.dataset.modelId = modelId;
     container.appendChild(msg);
     thinkingElements[modelId] = msg;
-    scrollToBottom();
+    forceScrollToBottom();
 }
 
 function removeThinking(modelId) {
@@ -638,18 +762,39 @@ function endStreaming(modelId) {
 
     const cleanText = stream.rawText
         .replace(/<generate_image>[\s\S]*?<\/generate_image>/gi, '')
-        .replace(/`?\[GENERATE_IMAGE:\s*.+?\]`?/g, '')
+        .replace(/`?\[GENERATE_IMAGE:\s*.+?\]`?/gi, '')
+        // Strip JSON tool call arrays: [{"name": "generate_image", ...}]
+        .replace(/\[\s*\{\s*"name"\s*:\s*"[^"]*image[^"]*"[\s\S]*?\}\s*\]/gi, '')
+        // Strip standalone JSON tool call objects
+        .replace(/\{\s*"name"\s*:\s*"[^"]*image[^"]*"\s*,\s*"arguments"\s*:\s*\{[\s\S]*?\}\s*\}/gi, '')
+        // Nuclear: strip ANY JSON block containing "prompt" key
+        .replace(/\{[^{}]*"prompt"\s*:[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/gi, '')
+        // Strip any code-fenced block containing "prompt"
+        .replace(/```[^`]*"prompt"\s*:[^`]*```/gi, '')
+        .replace(/^\s*Generate\s+image\.?\s*$/gmi, '')
         .replace(/\*\*\s*\*\*/g, '')
         .replace(/```+\s*```*/g, '')
         .replace(/^\s*```+\s*$/gm, '')
         .trim();
-    if (!cleanText) {
+    // Separate image markdown from text — render images as actual <img> tags
+    const imageUrls = [];
+    const textOnly = cleanText.replace(/!\[Generated image\]\(([^)]+)\)/g, (_, url) => {
+        imageUrls.push(url);
+        return '';
+    }).replace(/\n{3,}/g, '\n\n').trim();
+
+    if (!textOnly && imageUrls.length === 0) {
         stream.element.remove();
         delete streamingMessages[modelId];
         return;
     }
     const contentEl = stream.element.querySelector('.content');
-    contentEl.innerHTML = renderMarkdown(cleanText);
+    let html = textOnly ? renderMarkdown(textOnly) : '';
+    // Append images as proper <img> elements
+    for (const url of imageUrls) {
+        html += `<img src="${url}" alt="Generated image" onload="forceScrollToBottom()" onerror="this.style.display='none'">`;
+    }
+    contentEl.innerHTML = html;
 
     stream.element.querySelectorAll('pre code').forEach((block) => {
         hljs.highlightElement(block);
@@ -679,6 +824,26 @@ function escapeHtml(text) {
 
 // ═══ History ═══
 
+function cleanHistoryContent(text) {
+    return text
+        .replace(/\[\s*\{\s*"name"\s*:\s*"[^"]*image[^"]*"[\s\S]*?\}\s*\]/gi, '')
+        .replace(/\{\s*"name"\s*:\s*"[^"]*image[^"]*"\s*,\s*"arguments"\s*:\s*\{[\s\S]*?\}\s*\}/gi, '')
+        // Nuclear: strip ANY JSON block containing "prompt"
+        .replace(/\{[^{}]*"prompt"\s*:[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/gi, '')
+        .replace(/```[^`]*"prompt"\s*:[^`]*```/gi, '')
+        .replace(/^\s*Generate\s+image\.?\s*$/gmi, '')
+        .replace(/\[minstrel\]\s*/gi, '')
+        .replace(/^\s*\[\w+\]\s*\n?/gm, '')
+        // Strip empty code blocks and horizontal rules left behind
+        .replace(/```\s*```/g, '')
+        .replace(/^\s*```\s*$/gm, '')
+        .replace(/^\s*---+\s*$/gm, '')
+        .replace(/^\s*\*\*\*+\s*$/gm, '')
+        .replace(/^\s*___+\s*$/gm, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+}
+
 function loadHistory(history) {
     if (!history || !history.length) return;
     const container = document.getElementById('messages');
@@ -692,7 +857,9 @@ function loadHistory(history) {
         for (; i < end; i++) {
             const msg = history[i];
             const color = msg.role === 'user' ? '#00b4d8' : (activeModels[msg.role]?.color || '#888');
-            const el = createMessageElement(msg.name, msg.content, color);
+            const cleaned = msg.role === 'user' ? msg.content : cleanHistoryContent(msg.content);
+            if (!cleaned && !msg.content.startsWith('![')) continue; // skip empty after cleanup
+            const el = createMessageElement(msg.name, cleaned, color);
             fragment.appendChild(el);
         }
         container.appendChild(fragment);
@@ -715,6 +882,21 @@ function sendMessage() {
     if (safeSend({ action: 'send_message', content: content })) {
         input.value = '';
         input.style.height = 'auto';
+        // Flash the send button
+        const btn = document.querySelector('.btn-send');
+        if (btn) {
+            btn.classList.add('sent-flash');
+            setTimeout(() => btn.classList.remove('sent-flash'), 400);
+        }
+        // Brief input bar glow
+        const bar = document.getElementById('input-bar');
+        if (bar) {
+            bar.classList.add('sent-glow');
+            setTimeout(() => bar.classList.remove('sent-glow'), 600);
+        }
+        // Force scroll so thinking indicators are visible below user message
+        userScrolled = false;
+        forceScrollToBottom();
     }
 }
 
@@ -788,13 +970,15 @@ function saveProfile() {
 
 function toggleAutoChat() {
     const toggle = document.getElementById('auto-chat-toggle');
+    const promptEl = document.getElementById('auto-chat-prompt');
     if (toggle.checked) {
-        const promptEl = document.getElementById('auto-chat-prompt');
-        const prompt = promptEl.value.trim();
+        const prompt = promptEl ? promptEl.value.trim() : '';
         safeSend({ action: 'auto_chat_start', prompt: prompt });
-        if (prompt) promptEl.value = '';
+        if (prompt && promptEl) promptEl.value = '';
+        if (promptEl) promptEl.classList.remove('visible');
     } else {
         safeSend({ action: 'auto_chat_stop' });
+        if (promptEl) promptEl.classList.remove('visible');
     }
 }
 
@@ -825,6 +1009,12 @@ function updateAutoChatButton() {
     if (toggle) {
         toggle.checked = autoChatActive;
     }
+    const promptEl = document.getElementById('auto-chat-prompt');
+    if (promptEl) {
+        if (autoChatActive) {
+            promptEl.classList.remove('visible');
+        }
+    }
 }
 
 function sendKill() {
@@ -840,6 +1030,72 @@ function toggleSidebar() {
     const overlay = document.getElementById('sidebar-overlay');
     sidebar.classList.toggle('open');
     overlay.classList.toggle('open');
+}
+
+// ═══ SD Settings ═══
+
+function loadSdSettings(settings) {
+    if (!settings) return;
+    const section = document.getElementById('sd-settings-section');
+    if (section) section.style.display = '';
+
+    const setSlider = (id, valId, val) => {
+        const el = document.getElementById(id);
+        const valEl = document.getElementById(valId);
+        if (el) { el.value = val; updateSliderFill(el); }
+        if (valEl) valEl.textContent = val;
+    };
+
+    setSlider('sd-steps', 'sd-steps-val', settings.steps);
+    setSlider('sd-guidance', 'sd-cfg-val', settings.guidance_scale);
+    setSlider('sd-width', 'sd-width-val', settings.width);
+    setSlider('sd-height', 'sd-height-val', settings.height);
+
+    const negEl = document.getElementById('sd-negative-prompt');
+    if (negEl) negEl.value = settings.negative_prompt || '';
+
+    // Update preset buttons
+    updateSdPresetButtons(settings.width, settings.height);
+}
+
+let _sdUpdateTimers = {};
+function updateSdSetting(key, value) {
+    clearTimeout(_sdUpdateTimers[key]);
+    _sdUpdateTimers[key] = setTimeout(() => {
+        const msg = { action: 'update_sd_settings' };
+        msg[key] = value;
+        safeSend(msg);
+    }, 300);
+    // Update preset highlights for dimension changes
+    if (key === 'width' || key === 'height') {
+        const w = parseInt(document.getElementById('sd-width').value);
+        const h = parseInt(document.getElementById('sd-height').value);
+        updateSdPresetButtons(w, h);
+    }
+}
+
+function setSdPreset(w, h) {
+    const wEl = document.getElementById('sd-width');
+    const hEl = document.getElementById('sd-height');
+    if (wEl) { wEl.value = w; updateSliderFill(wEl); }
+    if (hEl) { hEl.value = h; updateSliderFill(hEl); }
+    document.getElementById('sd-width-val').textContent = w;
+    document.getElementById('sd-height-val').textContent = h;
+    updateSdPresetButtons(w, h);
+    safeSend({ action: 'update_sd_settings', width: w, height: h });
+}
+
+function updateSdPresetButtons(w, h) {
+    document.querySelectorAll('.sd-preset').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    const presets = [[512,512],[768,768],[1024,1024],[1024,768],[768,1024]];
+    const labels = ['512²','768²','1024²','1024×768','768×1024'];
+    const idx = presets.findIndex(p => p[0] === w && p[1] === h);
+    if (idx >= 0) {
+        const btns = document.querySelectorAll('.sd-preset');
+        if (btns[idx]) btns[idx].classList.add('active');
+    }
 }
 
 // ═══ Scroll ═══

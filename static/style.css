@@ -239,6 +239,38 @@ body {
     flex-shrink: 0;
 }
 
+/* ═══ Auto Chat Inline in Sidebar ═══ */
+.models-header-row {
+    display: flex !important;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.auto-chat-inline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.auto-chat-label {
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+.auto-chat-prompt-sidebar {
+    font-size: 11px;
+    display: none;
+    margin-top: 6px;
+}
+
+.auto-chat-prompt-sidebar.visible {
+    display: block;
+}
+
 /* Sections */
 .section {
     display: flex;
@@ -553,11 +585,96 @@ input[type="color"] {
     color: var(--accent);
 }
 
+.settings-section-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--accent);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 8px;
+}
+
+.settings-danger-zone {
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+    margin-top: 8px;
+}
+
 .settings-hint {
     font-size: 11px;
     color: var(--text-muted);
     line-height: 1.5;
     font-style: italic;
+}
+
+/* SD settings */
+.sd-model-badge {
+    font-size: 8px;
+    background: var(--accent-dim);
+    color: var(--accent);
+    padding: 2px 6px;
+    border-radius: 3px;
+    margin-left: 6px;
+    vertical-align: middle;
+    letter-spacing: 0.5px;
+}
+
+.sd-settings-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.sd-full-width {
+    width: 100%;
+}
+
+.sd-full-width textarea {
+    width: 100%;
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    resize: vertical;
+    font-family: inherit;
+}
+
+.sd-full-width textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.sd-resolution-presets {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.sd-preset {
+    font-size: 10px !important;
+    padding: 4px 8px !important;
+    background: var(--bg-dark) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text-secondary) !important;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-family: 'SF Mono', 'Fira Code', monospace !important;
+}
+
+.sd-preset:hover {
+    border-color: var(--accent) !important;
+    color: var(--accent) !important;
+}
+
+.sd-preset.active {
+    background: var(--accent-dim) !important;
+    border-color: var(--accent) !important;
+    color: var(--accent) !important;
 }
 
 /* Model memory in settings */
@@ -909,6 +1026,58 @@ input[type="color"] {
 }
 
 /* System messages */
+/* Queued Message Styling */
+.message.message-queued {
+    opacity: 0.55;
+    border-left: 2px solid rgba(189, 0, 255, 0.4);
+    padding-left: 14px;
+    transition: opacity 0.3s ease, border-color 0.3s ease;
+}
+.queued-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    padding: 4px 10px;
+    background: linear-gradient(90deg, rgba(189, 0, 255, 0.08), rgba(0, 212, 255, 0.05));
+    border-radius: 4px;
+    animation: queuedFadeIn 0.3s ease-out;
+}
+@keyframes queuedFadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.queued-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #bd00ff;
+    box-shadow: 0 0 6px rgba(189, 0, 255, 0.5);
+    animation: queuedPulse 1.2s ease-in-out infinite;
+    flex-shrink: 0;
+}
+@keyframes queuedPulse {
+    0%, 100% { box-shadow: 0 0 4px rgba(189, 0, 255, 0.3); }
+    50% { box-shadow: 0 0 10px rgba(189, 0, 255, 0.7); }
+}
+.queued-text {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    background: linear-gradient(90deg, #bd00ff, #00d4ff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+}
+.queued-hint {
+    font-size: 8px;
+    color: var(--text-muted);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    letter-spacing: 0.3px;
+    opacity: 0.7;
+}
+
 .message.system-msg {
     justify-content: center;
     padding: 6px 12px;
@@ -953,6 +1122,96 @@ input[type="color"] {
 @keyframes blink {
     0%, 100% { opacity: 1; }
     50% { opacity: 0; }
+}
+
+/* Image Generation Placeholder — Cyberpunk Style */
+.image-placeholder {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 14px 18px;
+    background: linear-gradient(135deg, rgba(0, 212, 255, 0.06) 0%, rgba(189, 0, 255, 0.06) 100%);
+    border: 1px solid rgba(0, 212, 255, 0.25);
+    border-radius: 8px;
+    min-height: 50px;
+    position: relative;
+    overflow: hidden;
+    animation: promptPulse 2s ease-in-out infinite;
+}
+.image-placeholder::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(0, 212, 255, 0.08), transparent);
+    animation: promptSweep 2s ease-in-out infinite;
+}
+@keyframes promptPulse {
+    0%, 100% { border-color: rgba(0, 212, 255, 0.25); box-shadow: 0 0 8px rgba(0, 212, 255, 0.05); }
+    50% { border-color: rgba(189, 0, 255, 0.35); box-shadow: 0 0 12px rgba(189, 0, 255, 0.1); }
+}
+@keyframes promptSweep {
+    0% { left: -100%; }
+    100% { left: 100%; }
+}
+.image-spinner {
+    width: 22px;
+    height: 22px;
+    border: 2px solid rgba(189, 0, 255, 0.3);
+    border-top-color: #00d4ff;
+    border-right-color: #bd00ff;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+.image-gen-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    background: linear-gradient(90deg, #00d4ff, #bd00ff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 4px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+}
+.tool-icon {
+    font-size: 12px;
+    -webkit-text-fill-color: #bd00ff;
+    filter: drop-shadow(0 0 4px rgba(189, 0, 255, 0.5));
+}
+.image-gen-prompt {
+    font-size: 12px;
+    color: #c0c8e8;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    line-height: 1.5;
+    position: relative;
+    z-index: 1;
+}
+.image-gen-prompt .prompt-text {
+    color: #e0e8ff;
+    background: rgba(0, 212, 255, 0.08);
+    padding: 2px 6px;
+    border-radius: 3px;
+    border-left: 2px solid #00d4ff;
+    display: block;
+    margin-top: 2px;
+}
+.image-gen-failed {
+    color: #ff4466;
+    font-size: 12px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    letter-spacing: 0.5px;
 }
 
 /* Input Bar */
@@ -1005,6 +1264,19 @@ input[type="color"] {
 #send-btn:hover {
     background: var(--accent);
     color: var(--bg-dark);
+}
+
+/* Send feedback */
+.btn-send.sent-flash {
+    background: var(--accent) !important;
+    color: var(--bg-dark) !important;
+    transform: scale(0.95);
+    transition: all 0.1s ease-out;
+}
+#input-bar.sent-glow {
+    border-top-color: var(--accent);
+    box-shadow: 0 -1px 8px rgba(0, 212, 255, 0.15);
+    transition: all 0.15s ease-out;
 }
 
 /* Scrollbar */
@@ -1149,14 +1421,21 @@ input[type="color"] {
     }
 
     #input-bar {
-        padding: 10px 12px;
+        padding: 8px 10px;
+        padding-bottom: max(8px, env(safe-area-inset-bottom, 8px));
         gap: 8px;
         flex-shrink: 0;
     }
 
     #user-input {
         font-size: 16px;
-        padding: 8px 10px;
+        min-height: 36px;
+        padding: 7px 10px;
+    }
+
+    #input-bar .btn-send {
+        padding: 7px 14px;
+        font-size: 11px;
     }
 
     #send-btn {

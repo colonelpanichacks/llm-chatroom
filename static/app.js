@@ -794,7 +794,7 @@ function endStreaming(modelId) {
     let html = textOnly ? renderMarkdown(textOnly) : '';
     // Append images as proper <img> elements
     for (const url of imageUrls) {
-        html += `<img src="${url}" alt="Generated image" onload="forceScrollToBottom()" onerror="this.style.display='none'">`;
+        html += `<img src="${url}" alt="Generated image" onload="forceScrollToBottom()" onerror="this.dataset.retries=(this.dataset.retries||0);if(this.dataset.retries<3){this.dataset.retries++;setTimeout(()=>this.src=this.src,1000)}else{this.style.opacity='0.3'}">`;
     }
     contentEl.innerHTML = html;
 
@@ -811,7 +811,7 @@ function renderMarkdown(text) {
     if (!text) return '';
     try {
         let html = marked.parse(text);
-        html = html.replace(/<img /g, '<img onload="forceScrollToBottom()" onerror="this.style.display=\'none\'" ');
+        html = html.replace(/<img /g, '<img loading="lazy" onload="forceScrollToBottom()" onerror="this.dataset.retries=(this.dataset.retries||0);if(this.dataset.retries<3){this.dataset.retries++;setTimeout(()=>this.src=this.src,1000)}else{this.style.opacity=\'0.3\'}" ');
         return html;
     } catch (e) {
         return escapeHtml(text);

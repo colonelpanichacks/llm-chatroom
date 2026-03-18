@@ -353,7 +353,7 @@ THINGS THAT DO NOT WORK (do not do any of these):
 - Writing "Image prompt:" followed by text
 - Writing markdown image links
 - Saying you'll generate something without actually calling the function
-- Writing {"generate_image": "..."} as text — that does NOT work
+- Writing JSON with "generate_image" as a key — that does NOT work
 - Writing meta-commentary about being a "text-based AI" or "cannot generate images"
 - Offering numbered options or menus to the user
 - Analyzing or describing images that were generated — just keep the story going

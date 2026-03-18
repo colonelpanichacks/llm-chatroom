@@ -767,10 +767,12 @@ function endStreaming(modelId) {
         .replace(/\[\s*\{\s*"name"\s*:\s*"[^"]*image[^"]*"[\s\S]*?\}\s*\]/gi, '')
         // Strip standalone JSON tool call objects
         .replace(/\{\s*"name"\s*:\s*"[^"]*image[^"]*"\s*,\s*"arguments"\s*:\s*\{[\s\S]*?\}\s*\}/gi, '')
-        // Nuclear: strip ANY JSON block containing a key with "prompt" in it
-        .replace(/\{[^{}]*"[^"]*prompt[^"]*"\s*:[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/gi, '')
-        // Strip any code-fenced block containing "prompt"
-        .replace(/```[^`]*"[^"]*prompt[^"]*"\s*:[^`]*```/gi, '')
+        // Strip {"generate_image": "..."} blocks
+        .replace(/\{\s*"generate_image"\s*:\s*"[^"]*"\s*\}/gi, '')
+        // Nuclear: strip ANY JSON block containing "prompt" or "generate" key
+        .replace(/\{[^{}]*"[^"]*(?:prompt|generate)[^"]*"\s*:[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/gi, '')
+        // Strip any code-fenced block containing "prompt" or "generate_image"
+        .replace(/```[^`]*"[^"]*(?:prompt|generate_image)[^"]*"\s*:[^`]*```/gi, '')
         .replace(/^\s*Generate\s+image\.?\s*$/gmi, '')
         .replace(/\*\*\s*\*\*/g, '')
         .replace(/```+\s*```*/g, '')
@@ -828,9 +830,10 @@ function cleanHistoryContent(text) {
     return text
         .replace(/\[\s*\{\s*"name"\s*:\s*"[^"]*image[^"]*"[\s\S]*?\}\s*\]/gi, '')
         .replace(/\{\s*"name"\s*:\s*"[^"]*image[^"]*"\s*,\s*"arguments"\s*:\s*\{[\s\S]*?\}\s*\}/gi, '')
-        // Nuclear: strip ANY JSON block containing a key with "prompt" in it
-        .replace(/\{[^{}]*"[^"]*prompt[^"]*"\s*:[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/gi, '')
-        .replace(/```[^`]*"[^"]*prompt[^"]*"\s*:[^`]*```/gi, '')
+        // Strip {"generate_image": "..."} and any JSON with "prompt" or "generate" key
+        .replace(/\{\s*"generate_image"\s*:\s*"[^"]*"\s*\}/gi, '')
+        .replace(/\{[^{}]*"[^"]*(?:prompt|generate)[^"]*"\s*:[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/gi, '')
+        .replace(/```[^`]*"[^"]*(?:prompt|generate_image)[^"]*"\s*:[^`]*```/gi, '')
         .replace(/^\s*Generate\s+image\.?\s*$/gmi, '')
         .replace(/\[minstrel\]\s*/gi, '')
         .replace(/^\s*\[\w+\]\s*\n?/gm, '')

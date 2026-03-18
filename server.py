@@ -223,6 +223,14 @@ async def generate_response(model_id: str) -> bool | str:
                 print(f"[text-tool-extract] Extracted JSON tool call prompt from {display_name}: {extracted[:80]}")
                 tool_calls.append({"function": {"name": "generate_image", "arguments": {"prompt": extracted}}})
 
+            # Catch {"generate_image": "prompt text"} format (models use this instead of tool calls)
+            if not tool_calls:
+                gen_img_match = re.search(r'"generate_image"\s*:\s*"([^"]{10,})"', raw_response, re.IGNORECASE)
+                if gen_img_match:
+                    extracted = gen_img_match.group(1).strip()
+                    print(f"[text-tool-extract] Extracted generate_image value from {display_name}: {extracted[:80]}")
+                    tool_calls.append({"function": {"name": "generate_image", "arguments": {"prompt": extracted}}})
+
             # Catch any key containing "prompt" with a long string value (models invent endless key names)
             if not tool_calls:
                 prompt_match = re.search(r'"[^"]*prompt[^"]*"\s*:\s*"([^"]{10,})"', raw_response, re.IGNORECASE)
@@ -329,10 +337,12 @@ async def generate_response(model_id: str) -> bool | str:
         clean_response = re.sub(r'\[\s*\{\s*"name"\s*:\s*"generate[_\s]?image"[\s\S]*?\}\s*\]', '', clean_response, flags=re.IGNORECASE)
         # Strip any remaining {"name": "..._image...", "arguments": {...}} blocks
         clean_response = re.sub(r'\{[^}]*"name"\s*:\s*"[^"]*image[^"]*"[^}]*"arguments"\s*:\s*\{[^}]*\}\s*\}', '', clean_response, flags=re.IGNORECASE)
-        # Nuclear: strip ANY JSON block containing a key with "prompt" in it (models invent image_prompt, img_prompt, etc)
-        clean_response = re.sub(r'\{[^{}]*"[^"]*prompt[^"]*"\s*:[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', '', clean_response, flags=re.IGNORECASE | re.DOTALL)
-        # Strip any code-fenced block containing "prompt" (catches all variations)
-        clean_response = re.sub(r'```[^`]*"[^"]*prompt[^"]*"\s*:[^`]*```', '', clean_response, flags=re.IGNORECASE | re.DOTALL)
+        # Strip {"generate_image": "..."} blocks
+        clean_response = re.sub(r'\{\s*"generate_image"\s*:\s*"[^"]*"\s*\}', '', clean_response, flags=re.IGNORECASE)
+        # Nuclear: strip ANY JSON block containing a key with "prompt" or "generate" in it
+        clean_response = re.sub(r'\{[^{}]*"[^"]*(?:prompt|generate)[^"]*"\s*:[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', '', clean_response, flags=re.IGNORECASE | re.DOTALL)
+        # Strip any code-fenced block containing "prompt" or "generate_image" (catches all variations)
+        clean_response = re.sub(r'```[^`]*"[^"]*(?:prompt|generate_image)[^"]*"\s*:[^`]*```', '', clean_response, flags=re.IGNORECASE | re.DOTALL)
         # Strip "Generate image" standalone lines
         clean_response = re.sub(r'^\s*Generate\s+image\.?\s*$', '', clean_response, flags=re.MULTILINE | re.IGNORECASE)
         clean_response = re.sub(r'^In this image,?\s+we\s+(can\s+)?see\b.*$', '', clean_response, flags=re.MULTILINE | re.IGNORECASE)

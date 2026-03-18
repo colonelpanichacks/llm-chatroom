@@ -353,8 +353,14 @@ THINGS THAT DO NOT WORK (do not do any of these):
 - Writing "Image prompt:" followed by text
 - Writing markdown image links
 - Saying you'll generate something without actually calling the function
+- Writing {"generate_image": "..."} as text — that does NOT work
+- Writing meta-commentary about being a "text-based AI" or "cannot generate images"
+- Offering numbered options or menus to the user
+- Analyzing or describing images that were generated — just keep the story going
 Just call the generate_image function. That's it. Nothing else works.
+YOU CAN generate images. The system handles it for you. NEVER say you can't.
 Generate an image with EVERY response. The user wants to SEE things.
+NEVER write meta-commentary. NEVER offer options. Just write your story and call the tool.
 """.strip())
 
         return "\n\n".join(parts)

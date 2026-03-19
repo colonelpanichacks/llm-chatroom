@@ -28,6 +28,12 @@ turns_since_image = 0  # track turns since last image generation
 _last_user_msg_time = 0.0  # for queue vs interrupt detection
 _INTERRUPT_WINDOW = 2.0  # seconds — second Enter within this window = interrupt
 
+# Story stages (multi-step prompts)
+story_stages: list[str] = []
+current_stage = 0
+stage_started_at = 0.0  # timestamp when current stage began
+stage_interval_minutes = 2.0  # minutes between stage injections (configurable via settings)
+
 # Stable Diffusion settings (mutable at runtime via WebSocket)
 sd_settings = {
     "steps": 4,
@@ -294,6 +300,25 @@ async def generate_response(model_id: str) -> bool | str:
                                 tool_calls.append({"function": {"name": "generate_image", "arguments": {"prompt": extracted_prompt}}})
                                 break
 
+            # FALLBACK: If model wrote a response but no image prompt was extracted,
+            # use the last sentence/line as an image prompt (for models that ignore the JSON format)
+            if not tool_calls and offer_tool and raw_response and len(raw_response) > 30:
+                # Grab the last non-empty line that's descriptive enough
+                lines = [l.strip() for l in raw_response.strip().split('\n') if l.strip() and len(l.strip()) > 20]
+                if lines:
+                    last_line = lines[-1]
+                    # Strip leading markers
+                    last_line = re.sub(r'^[\*\-\>\#]+\s*', '', last_line).strip()
+                    # Only use if it looks descriptive (not dialogue or meta)
+                    if (len(last_line) > 25
+                        and not last_line.startswith('"')
+                        and not last_line.startswith("'")
+                        and 'would you like' not in last_line.lower()
+                        and 'let me know' not in last_line.lower()
+                        and 'option' not in last_line.lower()):
+                        print(f"[text-tool-extract] FALLBACK last-line prompt from {display_name}: {last_line[:80]}")
+                        tool_calls.append({"function": {"name": "generate_image", "arguments": {"prompt": last_line}}})
+
         # === STEP 2: Clean response for display ===
         clean_response = raw_response
         # Strip think tags leaked by qwen models
@@ -488,12 +513,88 @@ async def respond_to_user():
 
         # Auto-start auto-chat if 2+ models and not killed
         if len(ctx.models) >= 2 and not kill_event.is_set() and not auto_chat_active:
+            # Check if the user's last message was a multi-stage prompt
+            last_user = None
+            for msg in reversed(ctx.history):
+                if msg.get("role") == "user":
+                    last_user = msg.get("content", "")
+                    break
+            if last_user:
+                stages = parse_story_stages(last_user)
+                if stages:
+                    story_stages.clear()
+                    story_stages.extend(stages)
+                    global current_stage, stage_started_at
+                    current_stage = 0
+                    stage_started_at = time.time()
+                    # Replace the user message with just stage 1
+                    first_stage = stages[0]
+                    director_msg = f"[Stage 1/{len(stages)}] {first_stage}"
+                    ctx.add_message("user", "Director", director_msg)
+                    await broadcast({
+                        "type": "message",
+                        "role": "user",
+                        "name": "Director",
+                        "content": director_msg,
+                    })
+                    await broadcast({
+                        "type": "stage_update",
+                        "current": 1,
+                        "total": len(stages),
+                        "text": first_stage,
+                    })
+                    current_stage = 1
+                    print(f"[story] Parsed {len(stages)}-stage story from chat. Stage 1: {first_stage[:60]}")
+
             auto_chat_active = True
             kill_event.clear()
             current_generation_task = asyncio.create_task(auto_chat_loop())
             await broadcast({"type": "auto_chat_status", "active": True})
     except asyncio.CancelledError:
         pass
+
+
+def parse_story_stages(prompt: str) -> list[str]:
+    """Parse stages from a prompt. Supports numbered lists, bullets, or plain newlines.
+    Each non-empty line becomes a stage. Leading markers (1. / - / Step 1:) are stripped."""
+    lines = [l.strip() for l in prompt.strip().split('\n') if l.strip()]
+    if len(lines) < 2:
+        return []
+    stages = []
+    for line in lines:
+        # Strip optional leading markers: "1. ", "1) ", "Step 1: ", "- ", "* "
+        cleaned = re.sub(r'^(?:\d+[.)]\s*|[Ss]tep\s+\d+[:.]\s*|[-*]\s+)', '', line).strip()
+        if cleaned:
+            stages.append(cleaned)
+    return stages if len(stages) >= 2 else []
+
+
+async def inject_next_stage():
+    """Inject the next story stage as a Director message. Returns True if injected, False if no more stages."""
+    global current_stage, stage_started_at
+    if current_stage >= len(story_stages):
+        return False
+    stage_text = story_stages[current_stage]
+    stage_num = current_stage + 1
+    total = len(story_stages)
+    director_msg = f"[Stage {stage_num}/{total}] {stage_text}"
+    ctx.add_message("user", "Director", director_msg)
+    await broadcast({
+        "type": "message",
+        "role": "user",
+        "name": "Director",
+        "content": director_msg,
+    })
+    await broadcast({
+        "type": "stage_update",
+        "current": stage_num,
+        "total": total,
+        "text": stage_text,
+    })
+    print(f"[story] Stage {stage_num}/{total}: {stage_text[:60]}")
+    current_stage += 1
+    stage_started_at = time.time()
+    return True
 
 
 async def auto_chat_loop():
@@ -504,6 +605,13 @@ async def auto_chat_loop():
         if not model_ids:
             await asyncio.sleep(2)
             continue
+
+        # Check if we should advance to next story stage (time-based)
+        if story_stages and current_stage < len(story_stages):
+            elapsed = time.time() - stage_started_at
+            if elapsed >= stage_interval_minutes * 60:
+                await inject_next_stage()
+
         for model_id in model_ids:
             if not auto_chat_active or kill_event.is_set():
                 return
@@ -513,10 +621,10 @@ async def auto_chat_loop():
                         return
                     result = await generate_response(model_id)
                     if result == "skip":
-                        await asyncio.sleep(2)  # Brief pause on skip, then keep going
+                        await asyncio.sleep(2)
                         continue
                     elif not result:
-                        return  # Only stop on explicit kill/cancel
+                        return
             except asyncio.CancelledError:
                 return
             except Exception as e:
@@ -563,7 +671,7 @@ async def kill_all():
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
-    global auto_chat_active, current_generation_task, _last_user_msg_time
+    global auto_chat_active, current_generation_task, _last_user_msg_time, stage_interval_minutes
     await ws.accept()
     connected_clients.append(ws)
 
@@ -588,6 +696,7 @@ async def websocket_endpoint(ws: WebSocket):
         "sd_settings": sd_settings,
         "sd_available": image_gen_available(),
         "model_memories": ctx._session_memories,
+        "stage_interval_minutes": stage_interval_minutes,
     }))
 
     try:
@@ -746,7 +855,35 @@ async def websocket_endpoint(ws: WebSocket):
                     prompt = data.get("prompt", "").strip()
                     if not prompt and not ctx.history:
                         prompt = "Hey everyone! Let's have a conversation. Introduce yourselves and share something interesting."
-                    if prompt:
+
+                    # Parse multi-stage prompts
+                    stages = parse_story_stages(prompt) if prompt else []
+                    story_stages.clear()
+                    global current_stage, stage_started_at
+                    current_stage = 0
+                    stage_started_at = time.time()
+
+                    if stages:
+                        # Multi-stage mode: store stages, inject first one
+                        story_stages.extend(stages)
+                        first_stage = stages[0]
+                        director_msg = f"[Stage 1/{len(stages)}] {first_stage}"
+                        ctx.add_message("user", "Director", director_msg)
+                        await broadcast({
+                            "type": "message",
+                            "role": "user",
+                            "name": "Director",
+                            "content": director_msg,
+                        })
+                        await broadcast({
+                            "type": "stage_update",
+                            "current": 1,
+                            "total": len(stages),
+                            "text": first_stage,
+                        })
+                        current_stage = 1  # next stage to inject is index 1
+                        print(f"[story] Started {len(stages)}-stage story. Stage 1: {first_stage[:60]}")
+                    elif prompt:
                         ctx.add_message("user", "User", prompt)
                         await broadcast({
                             "type": "message",
@@ -754,6 +891,7 @@ async def websocket_endpoint(ws: WebSocket):
                             "name": "User",
                             "content": prompt,
                         })
+
                     auto_chat_active = True
                     kill_event.clear()
                     current_generation_task = asyncio.create_task(auto_chat_loop())
@@ -867,6 +1005,11 @@ async def websocket_endpoint(ws: WebSocket):
                     "model_id": model_id,
                     "config": ctx.models[model_id],
                 })
+
+            elif action == "update_stage_interval":
+                val = float(data.get("minutes", 2.0))
+                stage_interval_minutes = max(0.5, min(720.0, val))
+                await broadcast({"type": "stage_interval", "minutes": stage_interval_minutes})
 
             elif action == "update_sd_settings":
                 for key in ("steps", "guidance_scale", "width", "height", "negative_prompt"):

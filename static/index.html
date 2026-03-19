@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LLM Chatroom</title>
+    <title>LLM Dream 👾</title>
     <link rel="stylesheet" href="/static/style.css?v=10">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
@@ -20,7 +20,7 @@
     <!-- Sidebar -->
     <aside id="sidebar">
         <div class="sidebar-header">
-            <h2>LLM Chatroom</h2>
+            <h2>LLM Dream 👾</h2>
             <div class="header-actions">
                 <button id="settings-btn" onclick="openSettings()" title="Settings">&#9881;</button>
                 <button id="sidebar-close" onclick="toggleSidebar()">&times;</button>
@@ -147,6 +147,20 @@
                         <button class="btn-sm sd-preset" onclick="setSdPreset(768,1024)">768×1024</button>
                     </div>
                 </div>
+            </div>
+
+            <!-- Story Director -->
+            <div class="settings-section">
+                <div class="settings-section-label">Story Director</div>
+                <div class="settings-row">
+                    <label>Stage Interval</label>
+                    <div class="slider-group">
+                        <input type="range" id="stage-interval" min="0.5" max="60" step="0.5" value="2" oninput="updateStageInterval(this)">
+                        <input type="number" id="stage-interval-num" class="settings-num-input" min="0.5" max="720" step="0.5" value="2" onchange="setStageIntervalNum(this)">
+                        <span class="slider-value" id="stage-interval-val">min</span>
+                    </div>
+                </div>
+                <p class="settings-hint">Time between auto-injected story stages. Use multi-line prompts to define stages.</p>
             </div>
 
             <!-- Preferences -->

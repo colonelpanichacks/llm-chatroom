@@ -71,6 +71,19 @@ function handleMessage(data) {
             if (data.sd_available) {
                 loadSdSettings(data.sd_settings);
             }
+            // Stage interval
+            if (data.stage_interval_minutes) {
+                const slider = document.getElementById('stage-interval');
+                if (slider) {
+                    slider.value = data.stage_interval_minutes;
+                    const label = document.getElementById('stage-interval-val');
+                    if (label) {
+                        const v = data.stage_interval_minutes;
+                        label.textContent = v >= 60 ? `${(v/60).toFixed(1)} hr` : `${v} min`;
+                    }
+                    updateSliderFill(slider);
+                }
+            }
             break;
 
         case 'available_models':
@@ -150,6 +163,11 @@ function handleMessage(data) {
         case 'auto_chat_status':
             autoChatActive = data.active;
             updateAutoChatButton();
+            if (!data.active) hideStageIndicator();
+            break;
+
+        case 'stage_update':
+            showStageIndicator(data.current, data.total, data.text);
             break;
 
         case 'killed':
@@ -1113,6 +1131,28 @@ function toggleAutoScroll() {
     }
 }
 
+function updateStageInterval(input) {
+    const val = parseFloat(input.value);
+    const numInput = document.getElementById('stage-interval-num');
+    if (numInput) numInput.value = val;
+    const label = document.getElementById('stage-interval-val');
+    if (label) label.textContent = 'min';
+    updateSliderFill(input);
+    safeSend({ action: 'update_stage_interval', minutes: val });
+}
+
+function setStageIntervalNum(input) {
+    let val = parseFloat(input.value) || 2;
+    val = Math.max(0.5, Math.min(720, val));
+    input.value = val;
+    const slider = document.getElementById('stage-interval');
+    if (slider) {
+        slider.value = Math.min(val, 60); // slider maxes at 60
+        updateSliderFill(slider);
+    }
+    safeSend({ action: 'update_stage_interval', minutes: val });
+}
+
 function updateAutoChatButton() {
     const toggle = document.getElementById('auto-chat-toggle');
     if (toggle) {
@@ -1124,6 +1164,31 @@ function updateAutoChatButton() {
             promptEl.classList.remove('visible');
         }
     }
+}
+
+function showStageIndicator(current, total, text) {
+    let indicator = document.getElementById('stage-indicator');
+    if (!indicator) {
+        indicator = document.createElement('div');
+        indicator.id = 'stage-indicator';
+        indicator.className = 'stage-indicator';
+        const chatArea = document.querySelector('.chat-area');
+        if (chatArea) chatArea.appendChild(indicator);
+    }
+    const pct = (current / total) * 100;
+    indicator.innerHTML = `
+        <div class="stage-progress-bar"><div class="stage-progress-fill" style="width:${pct}%"></div></div>
+        <div class="stage-label">
+            <span class="stage-badge">STAGE ${current}/${total}</span>
+            <span class="stage-text">${text}</span>
+        </div>
+    `;
+    indicator.style.display = 'flex';
+}
+
+function hideStageIndicator() {
+    const indicator = document.getElementById('stage-indicator');
+    if (indicator) indicator.style.display = 'none';
 }
 
 function sendKill() {

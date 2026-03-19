@@ -344,23 +344,27 @@ CONVERSATION RULES:
 10. NEVER write fake URLs or links. You cannot link to images. You cannot write (https://...) to generate anything.
 
 IMAGE GENERATION — MANDATORY:
-You MUST generate an image with EVERY single response. No exceptions.
-To generate an image, write this JSON block at the END of your response:
-{{"generate_image": "your detailed image prompt here"}}
-The system detects this block, generates the image, and displays it inline.
-EVERY response you write MUST end with a generate_image JSON block. This is not optional.
-If you forget, the user will be disappointed. ALWAYS include it.
+You MUST generate an image with EVERY response. No exceptions. Here is an example of the EXACT format:
+
+The neon lights flickered as she stepped into the alley. Rain pooled around her boots.
+
+{{"generate_image": "A woman in a cyberpunk alley at night, neon lights reflecting in rain puddles, moody blue and pink lighting"}}
+
+YOUR RESPONSE MUST END WITH THAT JSON BLOCK. Copy the format exactly:
+1. Write your story text
+2. Leave a blank line
+3. Write {{"generate_image": "detailed visual prompt"}}
+
+That's it. The system reads the JSON and generates the image automatically.
+If you skip the JSON block, NO IMAGE is generated and the user sees nothing.
 RULES:
-- Write your story/response text FIRST, then add the JSON block at the very end.
-- Write ONE generate_image block per response. Not more.
-- Make prompts detailed and visual — describe scene, lighting, mood, colors, atmosphere.
-- Keep prompts under 70 words (CLIP token limit).
-- NEVER say you can't generate images. You absolutely CAN.
+- The LAST LINE of your response must be the {{"generate_image": "..."}} JSON block.
+- Make prompts detailed and visual — describe scene, lighting, mood, colors.
+- Keep prompts under 70 words.
+- NEVER say you can't generate images. You CAN by writing the JSON block.
 - NEVER offer numbered options or menus.
-- NEVER write meta-commentary about being a "text-based AI".
-- NEVER analyze or describe images that were already generated — just keep the story going.
-- Do NOT write URLs, Python code, markdown image links, or *generates image* markers.
-- Do NOT wrap the JSON in a code fence or backticks. Just write the raw JSON block.
+- NEVER analyze images already generated — keep the story moving.
+- Do NOT wrap the JSON in code fences or backticks. Write the raw JSON.
 """.strip())
 
         return "\n\n".join(parts)

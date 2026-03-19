@@ -221,6 +221,8 @@ function renderSessions(sessions, currentId) {
         item.className = 'session-item' + (s.id === currentId ? ' active' : '');
         item.onclick = (e) => {
             if (e.target.classList.contains('session-delete') || e.target.closest('.session-delete')) return;
+            if (e.target.classList.contains('session-gear') || e.target.closest('.session-gear')) return;
+            if (e.target.closest('.session-menu')) return;
             if (e.target.hasAttribute('contenteditable')) return;
             switchSession(s.id);
         };
@@ -251,7 +253,14 @@ function renderSessions(sessions, currentId) {
                     ${s.message_count ? `<span class="session-msg-count">${s.message_count} msgs</span>` : ''}
                 </div>
             </div>
-            <button class="session-delete" onclick="event.stopPropagation();deleteSession('${s.id}')" title="Delete">&times;</button>
+            <div class="session-actions">
+                <button class="session-gear" onclick="event.stopPropagation();toggleSessionMenu('${s.id}', this)" title="Options">⚙</button>
+                <button class="session-delete" onclick="event.stopPropagation();deleteSession('${s.id}')" title="Delete">&times;</button>
+            </div>
+            <div class="session-menu" id="session-menu-${s.id}">
+                <button onclick="event.stopPropagation();exportSessionStorybook('${s.id}')">📖 Storybook</button>
+                <button class="disabled" onclick="event.stopPropagation()">🎞 Flip Book</button>
+            </div>
         `;
 
         // Double-click title to rename
@@ -1202,6 +1211,28 @@ function clearHistory() {
 function exportStorybook() {
     if (!currentSessionId) return;
     window.open(`/storybook/${currentSessionId}`, '_blank');
+}
+
+function exportSessionStorybook(sessionId) {
+    window.open(`/storybook/${sessionId}`, '_blank');
+    closeAllSessionMenus();
+}
+
+function toggleSessionMenu(sessionId, btn) {
+    const menu = document.getElementById(`session-menu-${sessionId}`);
+    const wasOpen = menu.classList.contains('open');
+    closeAllSessionMenus();
+    if (!wasOpen) {
+        menu.classList.add('open');
+        // Close on outside click
+        setTimeout(() => {
+            document.addEventListener('click', closeAllSessionMenus, { once: true });
+        }, 0);
+    }
+}
+
+function closeAllSessionMenus() {
+    document.querySelectorAll('.session-menu.open').forEach(m => m.classList.remove('open'));
 }
 
 function toggleSidebar() {

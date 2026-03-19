@@ -204,24 +204,73 @@ body {
     color: var(--text-muted);
 }
 
-.session-delete {
+.session-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+}
+.session-gear, .session-delete {
     background: none;
     border: none;
     color: var(--text-muted);
-    font-size: 14px;
+    font-size: 12px;
     cursor: pointer;
     padding: 2px 4px;
     opacity: 0;
     transition: all 0.15s;
-    flex-shrink: 0;
+    border-radius: 3px;
 }
-
+.session-item:hover .session-gear,
 .session-item:hover .session-delete {
     opacity: 1;
 }
-
-.session-delete:hover {
-    color: var(--danger);
+.session-gear:hover { color: var(--accent); }
+.session-delete:hover { color: var(--danger); }
+.session-item { position: relative; }
+.session-menu {
+    display: none;
+    position: absolute;
+    right: 0;
+    top: 100%;
+    z-index: 100;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 0;
+    min-width: 170px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    animation: menuFadeIn 0.15s ease-out;
+}
+.session-menu.open { display: block; }
+.session-menu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--text);
+    padding: 8px 14px;
+    font-size: 12px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    cursor: pointer;
+    transition: background 0.1s;
+}
+.session-menu button:hover {
+    background: rgba(0, 255, 200, 0.08);
+    color: var(--accent);
+}
+.session-menu button.disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+.session-menu button.disabled:hover {
+    background: none;
+    color: var(--text);
+}
+@keyframes menuFadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 .sessions-empty {

@@ -1199,6 +1199,11 @@ function clearHistory() {
     safeSend({ action: 'clear_history' });
 }
 
+function exportStorybook() {
+    if (!currentSessionId) return;
+    window.open(`/storybook/${currentSessionId}`, '_blank');
+}
+
 function toggleSidebar() {
     const sidebar = document.getElementById('sidebar');
     const overlay = document.getElementById('sidebar-overlay');

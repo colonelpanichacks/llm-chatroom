@@ -488,6 +488,16 @@ input[type="color"] {
     background: var(--danger);
     color: white;
 }
+.btn-export {
+    background: transparent;
+    color: var(--accent);
+    border-color: var(--accent);
+    width: 100%;
+}
+.btn-export:hover {
+    background: var(--accent);
+    color: var(--bg);
+}
 
 /* Auto chat toggle active */
 .toggle-row .toggle-switch input:checked + .toggle-slider.auto-chat-active {

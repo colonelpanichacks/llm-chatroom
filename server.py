@@ -98,6 +98,209 @@ async def index():
     return resp
 
 
+@app.get("/storybook/{session_id}")
+async def storybook(session_id: str):
+    """Render a session as a beautiful storybook — model text + images only, no user/system messages."""
+    import glob as _glob
+    # Load session
+    session_path = os.path.join(os.path.dirname(__file__), "sessions", f"{session_id}.json")
+    if not os.path.exists(session_path):
+        return HTMLResponse("<h1>Session not found</h1>", status_code=404)
+    with open(session_path) as f:
+        session_data = json.load(f)
+    history = session_data.get("history", [])
+    title = session_data.get("title", "Untitled Story")
+
+    # Build story content — only model messages (skip user, Director, system)
+    sections = []
+    for msg in history:
+        role = msg.get("role", "")
+        name = msg.get("name", "")
+        content = msg.get("content", "").strip()
+        images = msg.get("images", [])
+
+        # Skip user messages, Director stages, system messages
+        if role == "user" or name in ("User", "Director"):
+            continue
+        if not content and not images:
+            continue
+
+        # Clean content — strip image markdown from text (we render images separately)
+        clean = re.sub(r'!\[[^\]]*\]\([^)]*\)', '', content).strip()
+        # Strip leftover artifacts
+        clean = re.sub(r'\n{3,}', '\n\n', clean).strip()
+
+        section_html = ""
+        if clean:
+            # Convert paragraphs
+            paragraphs = clean.split('\n\n')
+            for p in paragraphs:
+                p = p.strip()
+                if p:
+                    # Simple markdown: **bold**, *italic*
+                    p = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', p)
+                    p = re.sub(r'\*(.+?)\*', r'<em>\1</em>', p)
+                    section_html += f'<p>{p}</p>\n'
+
+        # Add images
+        for img_url in images:
+            section_html += f'<figure><img src="{img_url}" alt="Generated illustration" loading="lazy"></figure>\n'
+
+        if section_html:
+            color = msg.get("color", "#888")
+            sections.append(section_html)
+
+    story_body = "\n".join(sections)
+
+    # Count images
+    img_count = sum(len(msg.get("images", [])) for msg in history if msg.get("role") != "user")
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title} — LLM Dream Storybook</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap');
+
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+
+body {{
+    background: #0a0a0f;
+    color: #d4d4d8;
+    font-family: 'Crimson Pro', Georgia, serif;
+    font-size: 1.2rem;
+    line-height: 1.8;
+    min-height: 100vh;
+}}
+
+.storybook-header {{
+    text-align: center;
+    padding: 80px 20px 60px;
+    border-bottom: 1px solid rgba(0, 255, 200, 0.1);
+    background: linear-gradient(180deg, rgba(189, 0, 255, 0.05) 0%, transparent 100%);
+}}
+
+.storybook-title {{
+    font-size: clamp(2rem, 5vw, 3.5rem);
+    font-weight: 600;
+    background: linear-gradient(135deg, #bd00ff, #00ffc8);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 12px;
+    letter-spacing: 1px;
+}}
+
+.storybook-meta {{
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    color: #666;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+}}
+
+.storybook-content {{
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 60px 24px 120px;
+}}
+
+.storybook-content p {{
+    margin-bottom: 1.4em;
+    text-indent: 1.5em;
+}}
+
+.storybook-content p:first-child {{
+    text-indent: 0;
+}}
+
+.storybook-content p:first-child::first-letter {{
+    font-size: 3.2em;
+    float: left;
+    line-height: 0.8;
+    margin-right: 8px;
+    margin-top: 6px;
+    background: linear-gradient(135deg, #bd00ff, #00ffc8);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    font-weight: 600;
+}}
+
+.storybook-content strong {{
+    color: #00ffc8;
+    font-weight: 600;
+}}
+
+.storybook-content em {{
+    color: #c8b4ff;
+    font-style: italic;
+}}
+
+.storybook-content figure {{
+    margin: 40px -60px;
+    text-align: center;
+}}
+
+@media (max-width: 800px) {{
+    .storybook-content figure {{
+        margin: 30px -12px;
+    }}
+}}
+
+.storybook-content figure img {{
+    width: 100%;
+    max-width: 900px;
+    border-radius: 8px;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6), 0 0 80px rgba(189, 0, 255, 0.08);
+}}
+
+.storybook-footer {{
+    text-align: center;
+    padding: 40px 20px 60px;
+    border-top: 1px solid rgba(0, 255, 200, 0.1);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: #444;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+}}
+
+.storybook-divider {{
+    text-align: center;
+    margin: 40px 0;
+    color: #333;
+    font-size: 1.5rem;
+    letter-spacing: 12px;
+}}
+
+@media print {{
+    body {{ background: white; color: #222; }}
+    .storybook-header {{ border-bottom-color: #ccc; }}
+    .storybook-title {{ color: #222; -webkit-text-fill-color: #222; }}
+    .storybook-content figure {{ margin: 20px 0; }}
+    .storybook-content figure img {{ box-shadow: none; border: 1px solid #ddd; }}
+}}
+</style>
+</head>
+<body>
+<header class="storybook-header">
+    <h1 class="storybook-title">{title}</h1>
+    <div class="storybook-meta">LLM Dream 👾 &mdash; {img_count} illustrations</div>
+</header>
+<article class="storybook-content">
+{story_body}
+</article>
+<footer class="storybook-footer">
+    Generated by LLM Dream 👾
+</footer>
+</body>
+</html>"""
+    return HTMLResponse(html)
+
+
 async def broadcast(data: dict):
     msg = json.dumps(data)
     for ws in connected_clients[:]:

@@ -1550,26 +1550,33 @@ input[type="color"] {
     }
 
     #input-bar {
+        position: sticky;
+        bottom: 0;
         padding: 8px 10px;
-        padding-bottom: max(8px, env(safe-area-inset-bottom, 8px));
+        padding-bottom: max(10px, env(safe-area-inset-bottom, 10px));
         gap: 8px;
         flex-shrink: 0;
+        z-index: 50;
     }
 
     #user-input {
-        font-size: 16px;
+        font-size: 16px; /* prevents iOS zoom */
         min-height: 36px;
-        padding: 7px 10px;
+        max-height: 120px;
+        padding: 8px 10px;
+        border-radius: 8px;
     }
 
-    #input-bar .btn-send {
-        padding: 7px 14px;
-        font-size: 11px;
+    #user-input::placeholder {
+        font-size: 13px;
     }
 
+    #input-bar .btn-send,
     #send-btn {
         padding: 8px 14px;
         font-size: 11px;
+        min-width: 52px;
+        flex-shrink: 0;
     }
 
     .message {
@@ -1602,7 +1609,9 @@ input[type="color"] {
         width: 100vw;
         max-width: 100vw;
         max-height: 100vh;
+        max-height: 100dvh;
         height: 100vh;
+        height: 100dvh;
         border-radius: 0;
         border: none;
     }

@@ -8,7 +8,7 @@ import httpx
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 from ollama_client import list_models, chat_stream, chat_no_stream, unload_model, IMAGE_GEN_TOOL, DEFAULT_OLLAMA_HOST
 from context import ChatroomContext
@@ -73,10 +73,23 @@ async def startup_cleanup():
         except Exception as e:
             print(f"[startup] Cleanup skipped for {host}: {e}")
 
+    # Preload SDXL pipeline in background so first image is fast
+    if image_gen_available():
+        import asyncio
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(None, lambda: __import__('image_gen')._get_pipe())
+        print("[startup] SDXL pipeline preloading in background...")
+
 
 @app.get("/")
 async def index():
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+    # Serve index.html with no-cache headers so browser always gets fresh version
+    import time as _time
+    resp = FileResponse(os.path.join(STATIC_DIR, "index.html"))
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 
 async def broadcast(data: dict):
@@ -121,25 +134,29 @@ async def generate_response(model_id: str) -> bool | str:
         "color": color,
     })
 
-    # Provide image gen tool — only block if THIS model's last message was an image
+    # Always offer image gen — check if THIS model's last response had an image
     global turns_since_image
-    offer_tool = False
-    if image_gen_available():
-        # Find this model's most recent message
-        my_last_is_img = False
+    offer_tool = image_gen_available()
+    my_last_had_image = False
+    my_turns_without_image = 0
+    if offer_tool:
         for msg in reversed(ctx.history):
             if msg.get("role") == model_id:
-                my_last_is_img = msg.get("content", "").startswith("![")
-                break
-        offer_tool = not my_last_is_img
+                if msg.get("images") or msg.get("content", "").startswith("!["):
+                    my_last_had_image = True
+                    break
+                else:
+                    my_turns_without_image += 1
+                    if my_turns_without_image >= 3:
+                        break
     tools = [IMAGE_GEN_TOOL] if offer_tool else None
 
-    # Nudge models to generate images every 3 turns
-    if offer_tool and turns_since_image >= 3:
+    # ALWAYS nudge if this model hasn't generated an image in its last response
+    if offer_tool and not my_last_had_image:
         nudge_prompts = [
-            "Use the generate_image tool NOW to visualize what you're describing.",
-            "Stop talking and generate an image! Use the generate_image tool to show us.",
-            "Time for a visual — call generate_image with a detailed prompt for what you're discussing.",
+            'You MUST include a {"generate_image": "prompt"} JSON block at the end of your response. Do it NOW.',
+            'REMINDER: End your response with {"generate_image": "detailed visual prompt"} — this is mandatory.',
+            'You forgot to generate an image last time. Add {"generate_image": "prompt"} at the end of this response.',
         ]
         nudge = random.choice(nudge_prompts)
         messages.append({"role": "user", "content": f"[System]: {nudge}"})
@@ -210,6 +227,16 @@ async def generate_response(model_id: str) -> bool | str:
                     extracted = prompt_match.group(1).strip()
                     print(f"[text-tool-extract] Extracted prompt from JSON in {display_name}: {extracted[:80]}")
                     tool_calls.append({"function": {"name": "generate_image", "arguments": {"prompt": extracted}}})
+
+            # Catch "Generate_image:" without JSON — models write plain text prompts
+            if not tool_calls:
+                plain_match = re.search(r'[Gg]enerate_?[Ii]mage\s*:\s*(.{10,?)(?:\n|$)', raw_response)
+                if plain_match:
+                    extracted = plain_match.group(1).strip().rstrip('.')
+                    # Don't extract if it's just instructions about how to format
+                    if not any(kw in extracted.lower() for kw in ['json block', 'json format', 'please ensure', 'adhere']):
+                        print(f"[text-tool-extract] Extracted plain Generate_image from {display_name}: {extracted[:80]}")
+                        tool_calls.append({"function": {"name": "generate_image", "arguments": {"prompt": extracted}}})
 
             from urllib.parse import unquote
             # First, try to extract from URL-encoded generate_image links (models' favorite fake format)
@@ -283,6 +310,8 @@ async def generate_response(model_id: str) -> bool | str:
         clean_response = re.sub(r'\*generates?\s+image\*', '', clean_response, flags=re.IGNORECASE)
         # Strip "Generate an image/visual/picture of "quoted text"" lines
         clean_response = re.sub(r'^.*[Gg]enerate\s+(?:an?\s+)?(?:image|visual|picture|photo)\s+(?:of\s+)?"[^"]*".*$', '', clean_response, flags=re.MULTILINE)
+        # Strip "Generate_image: prompt text" lines (plain text, no JSON)
+        clean_response = re.sub(r'^[Gg]enerate_?[Ii]mage\s*:.*$', '', clean_response, flags=re.MULTILINE)
         # Strip *generates_image?prompt=...* style
         clean_response = re.sub(r'\*generates?_image[^*]*\*', '', clean_response, flags=re.IGNORECASE)
         # Strip fake imgur/external image links

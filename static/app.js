@@ -662,12 +662,22 @@ function replaceInlineImageSpinner(modelId, url) {
         const img = document.createElement('img');
         img.src = url;
         img.alt = 'Generated image';
-        img.onload = () => scrollToBottom();
-        img.onerror = () => { img.style.display = 'none'; };
+        img.className = 'inline-image';
+        img.onload = () => forceScrollToBottom();
+        img.onerror = function() {
+            this.dataset.retries = (this.dataset.retries || 0);
+            if (this.dataset.retries < 3) {
+                this.dataset.retries++;
+                setTimeout(() => this.src = this.src, 1000);
+            } else {
+                this.style.opacity = '0.3';
+            }
+        };
         placeholder.replaceWith(img);
     }
-    // Append back to rawText so endStreaming preserves it
-    stream.rawText += `\n\n![Generated image](${url})`;
+    // Track image URL — don't put in rawText (endStreaming strips ![])
+    if (!stream.inlineImages) stream.inlineImages = [];
+    stream.inlineImages.push(url);
     scrollToBottom();
 }
 
@@ -757,10 +767,14 @@ function startStreaming(modelId, name, color) {
 }
 
 function liveClean(text) {
-    // Realtime cleanup — hide tool call JSON as it streams in
+    // Realtime cleanup — hide tool call JSON and fake image refs as they stream in
     return text
+        // Strip ALL markdown image references (models invent fake URLs)
+        .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
         // Strip complete {"generate_image": "..."} blocks
         .replace(/\{\s*"generate_image"\s*:\s*"[^"]*"\s*\}/gi, '')
+        // Strip "Generate_image: prompt text" lines (plain text, no JSON)
+        .replace(/^Generate_?image\s*:.*$/gmi, '')
         // Strip complete {"prompt": "..."} blocks and variants
         .replace(/\{[^{}]*"[^"]*(?:prompt|generate)[^"]*"\s*:[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/gi, '')
         // Strip [{"name": "generate_image", ...}] arrays
@@ -773,6 +787,9 @@ function liveClean(text) {
         .replace(/\[TOOL_CALLS?\]/gi, '')
         // Hide incomplete JSON being typed — opening brace followed by "generate or "prompt
         .replace(/\{\s*"(?:generate_image|prompt|name)[^}]*$/i, '')
+        // Strip fake image URLs models write inline
+        .replace(/\(?\s*https?:\/\/[^\s)]*generate_image[^\s)]*\s*\)?/gi, '')
+        .replace(/\(?\s*https?:\/\/i\.imgur\.com\/[^\s)]*\s*\)?/gi, '')
         // Strip orphaned ``` and json tags
         .replace(/```+\s*```*/g, '')
         .replace(/^\s*```+\s*$/gm, '')
@@ -818,25 +835,49 @@ function endStreaming(modelId) {
         .replace(/```+\s*```*/g, '')
         .replace(/^\s*```+\s*$/gm, '')
         .trim();
-    // Separate image markdown from text — render images as actual <img> tags
-    const imageUrls = [];
-    const textOnly = cleanText.replace(/!\[Generated image\]\(([^)]+)\)/g, (_, url) => {
-        imageUrls.push(url);
-        return '';
-    }).replace(/\n{3,}/g, '\n\n').trim();
+    // Strip ALL image markdown from model text — real images come via image_inline_ready
+    const textOnly = cleanText
+        .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
 
-    if (!textOnly && imageUrls.length === 0) {
+    // Check if we have inline images (DOM elements or tracked URLs)
+    const existingImages = stream.element.querySelectorAll('.inline-image');
+    const trackedImages = stream.inlineImages || [];
+    const hasImages = existingImages.length > 0 || trackedImages.length > 0;
+
+    if (!textOnly && !hasImages) {
         stream.element.remove();
         delete streamingMessages[modelId];
         return;
     }
     const contentEl = stream.element.querySelector('.content');
     let html = textOnly ? renderMarkdown(textOnly) : '';
-    // Append images as proper <img> elements
-    for (const url of imageUrls) {
-        html += `<img src="${url}" alt="Generated image" onload="forceScrollToBottom()" onerror="this.dataset.retries=(this.dataset.retries||0);if(this.dataset.retries<3){this.dataset.retries++;setTimeout(()=>this.src=this.src,1000)}else{this.style.opacity='0.3'}">`;
-    }
     contentEl.innerHTML = html;
+    // Re-append any inline images that were added during streaming
+    for (const img of existingImages) {
+        contentEl.appendChild(img);
+    }
+    // Also create img elements from tracked URLs (fallback if DOM elements were lost)
+    if (existingImages.length === 0 && trackedImages.length > 0) {
+        for (const url of trackedImages) {
+            const img = document.createElement('img');
+            img.src = url;
+            img.alt = 'Generated image';
+            img.className = 'inline-image';
+            img.onload = () => forceScrollToBottom();
+            img.onerror = function() {
+                this.dataset.retries = (this.dataset.retries || 0);
+                if (this.dataset.retries < 3) {
+                    this.dataset.retries++;
+                    setTimeout(() => this.src = this.src, 1000);
+                } else {
+                    this.style.opacity = '0.3';
+                }
+            };
+            contentEl.appendChild(img);
+        }
+    }
 
     stream.element.querySelectorAll('pre code').forEach((block) => {
         hljs.highlightElement(block);
@@ -900,9 +941,34 @@ function loadHistory(history) {
         for (; i < end; i++) {
             const msg = history[i];
             const color = msg.role === 'user' ? '#00b4d8' : (activeModels[msg.role]?.color || '#888');
-            const cleaned = msg.role === 'user' ? msg.content : cleanHistoryContent(msg.content);
-            if (!cleaned && !msg.content.startsWith('![')) continue; // skip empty after cleanup
-            const el = createMessageElement(msg.name, cleaned, color);
+            let cleaned = msg.role === 'user' ? msg.content : cleanHistoryContent(msg.content);
+            // Strip ALL image markdown from text — we render real images separately
+            const textOnly = cleaned.replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\n{3,}/g, '\n\n').trim();
+            // Get real image URLs from the images array (server-verified)
+            const realImages = msg.images || [];
+            if (!textOnly && realImages.length === 0) continue;
+            const el = createMessageElement(msg.name, textOnly, color);
+            // Append only real server-generated images
+            if (realImages.length > 0) {
+                const contentEl = el.querySelector('.content');
+                for (const url of realImages) {
+                    const img = document.createElement('img');
+                    img.src = url;
+                    img.alt = 'Generated image';
+                    img.className = 'inline-image';
+                    img.onload = () => forceScrollToBottom();
+                    img.onerror = function() {
+                        this.dataset.retries = (this.dataset.retries || 0);
+                        if (this.dataset.retries < 3) {
+                            this.dataset.retries++;
+                            setTimeout(() => this.src = this.src, 1000);
+                        } else {
+                            this.style.opacity = '0.3';
+                        }
+                    };
+                    contentEl.appendChild(img);
+                }
+            }
             fragment.appendChild(el);
         }
         container.appendChild(fragment);

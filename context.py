@@ -343,24 +343,24 @@ CONVERSATION RULES:
 9. Do NOT use bold markers (**), "Specifications used:", or "Please find below". Just talk naturally.
 10. NEVER write fake URLs or links. You cannot link to images. You cannot write (https://...) to generate anything.
 
-IMAGE GENERATION:
-You have a generate_image tool available as a function call. USE IT.
-The ONLY way to create an image is to make a tool/function call to generate_image with a prompt argument.
-THINGS THAT DO NOT WORK (do not do any of these):
-- Writing URLs like (https://generate_image?prompt=...)
-- Writing Python/PIL code
-- Writing *generates image* or (generates image)
-- Writing "Image prompt:" followed by text
-- Writing markdown image links
-- Saying you'll generate something without actually calling the function
-- Writing JSON with "generate_image" as a key — that does NOT work
-- Writing meta-commentary about being a "text-based AI" or "cannot generate images"
-- Offering numbered options or menus to the user
-- Analyzing or describing images that were generated — just keep the story going
-Just call the generate_image function. That's it. Nothing else works.
-YOU CAN generate images. The system handles it for you. NEVER say you can't.
-Generate an image with EVERY response. The user wants to SEE things.
-NEVER write meta-commentary. NEVER offer options. Just write your story and call the tool.
+IMAGE GENERATION — MANDATORY:
+You MUST generate an image with EVERY single response. No exceptions.
+To generate an image, write this JSON block at the END of your response:
+{{"generate_image": "your detailed image prompt here"}}
+The system detects this block, generates the image, and displays it inline.
+EVERY response you write MUST end with a generate_image JSON block. This is not optional.
+If you forget, the user will be disappointed. ALWAYS include it.
+RULES:
+- Write your story/response text FIRST, then add the JSON block at the very end.
+- Write ONE generate_image block per response. Not more.
+- Make prompts detailed and visual — describe scene, lighting, mood, colors, atmosphere.
+- Keep prompts under 70 words (CLIP token limit).
+- NEVER say you can't generate images. You absolutely CAN.
+- NEVER offer numbered options or menus.
+- NEVER write meta-commentary about being a "text-based AI".
+- NEVER analyze or describe images that were already generated — just keep the story going.
+- Do NOT write URLs, Python code, markdown image links, or *generates image* markers.
+- Do NOT wrap the JSON in a code fence or backticks. Just write the raw JSON block.
 """.strip())
 
         return "\n\n".join(parts)
@@ -411,28 +411,28 @@ NEVER write meta-commentary. NEVER offer options. Just write your story and call
         if len(self.history) != before:
             self.save_session()
 
-    def build_ollama_messages(self, model_id: str, max_messages: int = 40) -> list[dict]:
-        """Build message list for Ollama, capped to last max_messages to prevent slowdown."""
+    def build_ollama_messages(self, model_id: str, max_messages: int = 16) -> list[dict]:
+        """Build message list for Ollama, capped to last max_messages to fit context window."""
+        import re as _re
         messages = []
         # Use only the most recent messages to keep context manageable
         recent = self.history[-max_messages:] if len(self.history) > max_messages else self.history
         for msg in recent:
+            content = msg["content"]
             # Skip broken image messages so models don't mimic them
-            if self._is_junk_msg(msg["content"]):
+            if self._is_junk_msg(content):
+                continue
+            # Strip image markdown from context — it's noise for the models
+            content = _re.sub(r'!\[[^\]]*\]\([^)]*\)', '', content).strip()
+            if not content:
                 continue
 
             if msg["role"] == "user":
-                entry = {"role": "user", "content": f'[User]: {msg["content"]}'}
+                entry = {"role": "user", "content": f'[User]: {content}'}
             elif msg["role"] == model_id:
-                entry = {"role": "assistant", "content": msg["content"]}
+                entry = {"role": "assistant", "content": content}
             else:
-                entry = {"role": "user", "content": f'[{msg["name"]}]: {msg["content"]}'}
-
-            # Attach images if present
-            if msg.get("images"):
-                encoded = self._encode_images(msg["images"])
-                if encoded:
-                    entry["images"] = encoded
+                entry = {"role": "user", "content": f'[{msg["name"]}]: {content}'}
 
             messages.append(entry)
         return messages

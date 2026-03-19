@@ -259,7 +259,7 @@ function renderSessions(sessions, currentId) {
             </div>
             <div class="session-menu" id="session-menu-${s.id}">
                 <button onclick="event.stopPropagation();exportSessionStorybook('${s.id}')">📖 Storybook</button>
-                <button class="disabled" onclick="event.stopPropagation()">🎞 Flip Book</button>
+                <button onclick="event.stopPropagation();exportSessionFlipbook('${s.id}')">🎞 Flip Book</button>
             </div>
         `;
 
@@ -1215,6 +1215,11 @@ function exportStorybook() {
 
 function exportSessionStorybook(sessionId) {
     window.open(`/storybook/${sessionId}`, '_blank');
+    closeAllSessionMenus();
+}
+
+function exportSessionFlipbook(sessionId) {
+    window.open(`/flipbook/${sessionId}`, '_blank');
     closeAllSessionMenus();
 }
 

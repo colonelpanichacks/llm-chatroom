@@ -301,6 +301,218 @@ body {{
     return HTMLResponse(html)
 
 
+@app.get("/flipbook/{session_id}")
+async def flipbook(session_id: str):
+    """Animated flipbook — full-screen image slideshow with cinematic text overlays."""
+    session_path = os.path.join(os.path.dirname(__file__), "sessions", f"{session_id}.json")
+    if not os.path.exists(session_path):
+        return HTMLResponse("<h1>Session not found</h1>", status_code=404)
+    with open(session_path) as f:
+        session_data = json.load(f)
+    history = session_data.get("history", [])
+    title = session_data.get("title", "Untitled Story")
+
+    # Build slides: pair each image with its surrounding text
+    slides = []
+    current_text = ""
+    for msg in history:
+        role = msg.get("role", "")
+        name = msg.get("name", "")
+        if role == "user" or name in ("User", "Director"):
+            continue
+        content = msg.get("content", "").strip()
+        images = msg.get("images", [])
+        # Clean text
+        clean = re.sub(r'!\[[^\]]*\]\([^)]*\)', '', content).strip()
+        clean = re.sub(r'\n{3,}', '\n\n', clean).strip()
+        if clean:
+            # Simple markdown
+            clean = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', clean)
+            clean = re.sub(r'\*(.+?)\*', r'<em>\1</em>', clean)
+            current_text += clean + " "
+        for img_url in images:
+            # Truncate text to ~200 chars for overlay
+            overlay = current_text.strip()
+            if len(overlay) > 250:
+                overlay = overlay[-250:]
+                # Cut at sentence boundary
+                dot = overlay.find('. ')
+                if dot > 20:
+                    overlay = overlay[dot+2:]
+            slides.append({"url": img_url, "text": overlay})
+            current_text = ""
+
+    slides_json = json.dumps(slides)
+    img_count = len(slides)
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title} — Flip Book</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap');
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ background:#000; overflow:hidden; font-family:'Crimson Pro',Georgia,serif; cursor:none; }}
+body.paused {{ cursor:default; }}
+.flipbook {{ position:fixed; inset:0; }}
+.slide {{ position:absolute; inset:0; opacity:0; transition:opacity 1.5s ease; }}
+.slide.active {{ opacity:1; }}
+.slide img {{
+    width:100%; height:100%; object-fit:cover;
+    animation: kenburns 12s ease-in-out infinite alternate;
+}}
+@keyframes kenburns {{
+    0% {{ transform:scale(1) translate(0,0); }}
+    100% {{ transform:scale(1.08) translate(-1%,-1%); }}
+}}
+.slide .overlay {{
+    position:absolute; bottom:0; left:0; right:0;
+    padding:40px 60px 50px;
+    background:linear-gradient(transparent, rgba(0,0,0,0.85) 40%);
+    color:#e8e8ea;
+    font-size:clamp(0.9rem,2vw,1.3rem);
+    line-height:1.7;
+    opacity:0;
+    transform:translateY(10px);
+    transition:opacity 0.8s ease 0.5s, transform 0.8s ease 0.5s;
+}}
+.slide.active .overlay {{
+    opacity:1;
+    transform:translateY(0);
+}}
+.slide .overlay strong {{ color:#00ffc8; }}
+.slide .overlay em {{ color:#c8b4ff; }}
+.controls {{
+    position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+    display:flex; gap:12px; align-items:center; z-index:100;
+    opacity:0; transition:opacity 0.3s;
+    font-family:'JetBrains Mono',monospace;
+}}
+body.paused .controls, body:hover .controls {{ opacity:1; }}
+.controls button {{
+    background:rgba(0,0,0,0.6); border:1px solid rgba(255,255,255,0.15);
+    color:#ccc; padding:8px 16px; border-radius:20px; cursor:pointer;
+    font-size:13px; font-family:inherit; transition:all 0.2s;
+    backdrop-filter:blur(10px);
+}}
+.controls button:hover {{ border-color:var(--accent,#00ffc8); color:#fff; }}
+.progress {{
+    position:fixed; top:0; left:0; height:3px; z-index:100;
+    background:linear-gradient(90deg,#bd00ff,#00ffc8);
+    transition:width 0.3s ease;
+}}
+.counter {{
+    position:fixed; top:16px; right:20px; z-index:100;
+    font-family:'JetBrains Mono',monospace; font-size:11px;
+    color:rgba(255,255,255,0.4); letter-spacing:2px;
+    opacity:0; transition:opacity 0.3s;
+}}
+body.paused .counter, body:hover .counter {{ opacity:1; }}
+.title-card {{
+    position:fixed; inset:0; z-index:200;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    background:#0a0a0f;
+    transition:opacity 1s ease;
+}}
+.title-card.hidden {{ opacity:0; pointer-events:none; }}
+.title-card h1 {{
+    font-size:clamp(2.5rem,6vw,5rem); font-weight:600;
+    background:linear-gradient(135deg,#bd00ff,#00ffc8);
+    -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+    background-clip:text; margin-bottom:16px; text-align:center; padding:0 20px;
+}}
+.title-card .meta {{
+    font-family:'JetBrains Mono',monospace; font-size:0.7rem;
+    color:#555; letter-spacing:3px; text-transform:uppercase;
+}}
+</style>
+</head>
+<body>
+<div class="title-card" id="titleCard">
+    <h1>{title}</h1>
+    <div class="meta">LLM Dream 👾 &mdash; {img_count} frames</div>
+</div>
+<div class="progress" id="progress"></div>
+<div class="counter" id="counter"></div>
+<div class="flipbook" id="flipbook"></div>
+<div class="controls">
+    <button onclick="prev()">◀</button>
+    <button onclick="togglePause()" id="pauseBtn">⏸</button>
+    <button onclick="next()">▶</button>
+    <button onclick="setSpeed(-1)">−</button>
+    <span id="speedLabel" style="color:#888;font-size:11px;">6s</span>
+    <button onclick="setSpeed(1)">+</button>
+</div>
+<script>
+const slides = {slides_json};
+let current = 0, paused = false, interval = 6000, timer = null;
+const fb = document.getElementById('flipbook');
+const prog = document.getElementById('progress');
+const counter = document.getElementById('counter');
+
+// Preload all images
+slides.forEach((s,i) => {{
+    const div = document.createElement('div');
+    div.className = 'slide';
+    div.innerHTML = `<img src="${{s.url}}" alt=""><div class="overlay">${{s.text}}</div>`;
+    fb.appendChild(div);
+    const img = new Image();
+    img.src = s.url;
+}});
+
+function show(idx) {{
+    document.querySelectorAll('.slide').forEach((s,i) => s.classList.toggle('active', i===idx));
+    prog.style.width = ((idx+1)/slides.length*100)+'%';
+    counter.textContent = (idx+1)+' / '+slides.length;
+    current = idx;
+}}
+
+function next() {{ show((current+1) % slides.length); }}
+function prev() {{ show((current-1+slides.length) % slides.length); }}
+
+function togglePause() {{
+    paused = !paused;
+    document.body.classList.toggle('paused', paused);
+    document.getElementById('pauseBtn').textContent = paused ? '▶' : '⏸';
+    if (!paused) startTimer();
+    else clearInterval(timer);
+}}
+
+function setSpeed(delta) {{
+    interval = Math.max(2000, Math.min(20000, interval + delta*1000));
+    document.getElementById('speedLabel').textContent = (interval/1000)+'s';
+    if (!paused) startTimer();
+}}
+
+function startTimer() {{
+    clearInterval(timer);
+    timer = setInterval(next, interval);
+}}
+
+// Title card → first slide
+setTimeout(() => {{
+    document.getElementById('titleCard').classList.add('hidden');
+    if (slides.length) show(0);
+    startTimer();
+}}, 3000);
+
+// Keyboard controls
+document.addEventListener('keydown', e => {{
+    if (e.key === 'ArrowRight' || e.key === ' ') next();
+    else if (e.key === 'ArrowLeft') prev();
+    else if (e.key === 'p' || e.key === 'Escape') togglePause();
+}});
+
+// Click to advance
+document.getElementById('flipbook').addEventListener('click', next);
+</script>
+</body>
+</html>"""
+    return HTMLResponse(html)
+
+
 async def broadcast(data: dict):
     msg = json.dumps(data)
     for ws in connected_clients[:]:

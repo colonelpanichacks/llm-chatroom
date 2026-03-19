@@ -258,8 +258,8 @@ function renderSessions(sessions, currentId) {
                 <button class="session-delete" onclick="event.stopPropagation();deleteSession('${s.id}')" title="Delete">&times;</button>
             </div>
             <div class="session-menu" id="session-menu-${s.id}">
-                <button onclick="event.stopPropagation();exportSessionStorybook('${s.id}')">📖 Storybook</button>
-                <button onclick="event.stopPropagation();exportSessionFlipbook('${s.id}')">🎞 Flip Book</button>
+                <button onclick="event.stopPropagation();exportSessionStorybook('${s.id}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> Storybook</button>
+                <button onclick="event.stopPropagation();exportSessionFlipbook('${s.id}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/><line x1="17" y1="17" x2="22" y2="17"/></svg> Flip Book</button>
             </div>
         `;
 
@@ -1228,6 +1228,10 @@ function toggleSessionMenu(sessionId, btn) {
     const wasOpen = menu.classList.contains('open');
     closeAllSessionMenus();
     if (!wasOpen) {
+        // Position menu using fixed coordinates
+        const rect = btn.getBoundingClientRect();
+        menu.style.top = (rect.bottom + 4) + 'px';
+        menu.style.left = Math.max(8, rect.right - 160) + 'px';
         menu.classList.add('open');
         // Close on outside click
         setTimeout(() => {

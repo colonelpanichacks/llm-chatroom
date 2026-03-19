@@ -232,12 +232,13 @@ body {
     display: none;
     position: fixed;
     z-index: 1000;
-    background: var(--bg-secondary);
+    background: #1a1a2e;
     border: 1px solid var(--border);
     border-radius: 6px;
     padding: 4px 0;
     min-width: 160px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.5), 0 0 40px rgba(189,0,255,0.06);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.7), 0 0 40px rgba(189,0,255,0.06);
+    backdrop-filter: none;
     animation: menuFadeIn 0.15s ease-out;
 }
 .session-menu.open { display: block; }
@@ -878,6 +879,16 @@ input[type="color"] {
     display: flex;
 }
 
+.model-remove-zone {
+    width: 100%;
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
+    margin-top: 6px;
+}
+.model-remove-btn {
+    width: 100%;
+    font-size: 11px !important;
+}
 .model-color-picker {
     width: 100%;
     height: 32px;

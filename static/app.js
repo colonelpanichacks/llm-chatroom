@@ -442,8 +442,7 @@ function renderActiveModels() {
                 <div class="name">${escapeHtml(cfg.display_name)}</div>
                 <div class="model-id">${escapeHtml(mid)}</div>
             </div>
-            <button class="settings-toggle" onclick="toggleModelSettings('${mid}')" title="Settings">&#9881;</button>
-            <button class="remove-btn" onclick="removeModel('${mid}')" title="Remove">&times;</button>
+            <button class="settings-toggle" onclick="toggleModelSettings('${mid}')" title="Expand settings">&#9662;</button>
             <div class="model-settings" id="settings-${CSS.escape(mid)}">
                 <div class="param-group">
                     <label>Display Name</label>
@@ -480,6 +479,9 @@ function renderActiveModels() {
                     <input type="range" min="1.0" max="2.0" step="0.05" value="${repPen}"
                         oninput="updateModelParam('${mid}','repeat_penalty',parseFloat(this.value));document.getElementById('live-rep-${CSS.escape(mid)}').textContent=this.value;updateSliderFill(this)">
                 </div>
+                <div class="model-remove-zone">
+                    <button class="btn-sm btn-danger model-remove-btn" onclick="confirmRemoveModel('${mid}')">Remove Model</button>
+                </div>
             </div>
         `;
         container.appendChild(card);
@@ -490,7 +492,20 @@ function renderActiveModels() {
 
 function toggleModelSettings(modelId) {
     const el = document.getElementById('settings-' + CSS.escape(modelId));
-    if (el) el.classList.toggle('open');
+    if (el) {
+        el.classList.toggle('open');
+        // Rotate chevron
+        const card = el.closest('.model-card');
+        const btn = card?.querySelector('.settings-toggle');
+        if (btn) btn.innerHTML = el.classList.contains('open') ? '&#9652;' : '&#9662;';
+    }
+}
+
+function confirmRemoveModel(modelId) {
+    const name = activeModels[modelId]?.display_name || modelId;
+    if (confirm(`Remove "${name}" from the chatroom?`)) {
+        removeModel(modelId);
+    }
 }
 
 function renameModel(modelId, newName) {
